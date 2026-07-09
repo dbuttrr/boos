@@ -10,16 +10,26 @@ let currentTheme = null;
 const CARTO_ATTR =
   '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/attributions">CARTO</a>';
 
-const ROUTE_COLORS = [
+export const ROUTE_COLORS = [
   {
     light: "#0969da",
-    dark: "#58a6ff",
+    dark: "#4a90d9",
     busClass: "focus-marker--bus-a",
+    lineOpacity: { single: 0.65, dual: 0.4 },
+    rowAlpha: {
+      light: { border: 0.45, bg: 0.12, glow: 0.12 },
+      dark: { border: 0.55, bg: 0.14, glow: 0.18 },
+    },
   },
   {
-    light: "#bf3989",
-    dark: "#f778ba",
+    light: "#f5c400",
+    dark: "#d4b84a",
     busClass: "focus-marker--bus-b",
+    lineOpacity: { single: 0.75, dual: 0.65 },
+    rowAlpha: {
+      light: { border: 0.75, bg: 0.22, glow: 0.2 },
+      dark: { border: 0.85, bg: 0.22, glow: 0.28 },
+    },
   },
 ];
 
@@ -35,12 +45,13 @@ function cartoUrl(theme) {
   return `https://{s}.basemaps.cartocdn.com/${style}/{z}/{x}/{y}{r}.png`;
 }
 
-function approachLineStyle(theme, colorIndex = 0) {
+function approachLineStyle(theme, colorIndex = 0, { dual = false } = {}) {
   const palette = ROUTE_COLORS[colorIndex] ?? ROUTE_COLORS[0];
+  const lineOpacity = palette.lineOpacity ?? { single: 0.8, dual: 0.5 };
   return {
     color: theme === "dark" ? palette.dark : palette.light,
     weight: 3.5,
-    opacity: 0.8,
+    opacity: dual ? lineOpacity.dual : lineOpacity.single,
     lineCap: "round",
     lineJoin: "round",
   };
@@ -145,12 +156,15 @@ function applyTileTheme(theme) {
   tileLayer = next.addTo(map);
   tileLayer.bringToBack();
 
+  const dual = routeLayers.size >= 2;
   for (const layer of routeLayers.values()) {
     if (layer.fullRouteLine) {
       layer.fullRouteLine.setStyle(fullRouteLineStyle(theme));
     }
     if (layer.routeLine) {
-      layer.routeLine.setStyle(approachLineStyle(theme, layer.colorIndex));
+      layer.routeLine.setStyle(
+        approachLineStyle(theme, layer.colorIndex, { dual })
+      );
     }
   }
 }
@@ -244,7 +258,7 @@ export function fitToMarkers({ includeYou = true } = {}) {
   fitVisible(collectMarkerPoints({ includeYou }));
 }
 
-function paintRoute(route, theme) {
+function paintRoute(route, theme, { dual = false } = {}) {
   const L = window.L;
   const colorIndex = route.colorIndex ?? 0;
   const boardingStop = route.boardingStop;
@@ -280,7 +294,7 @@ function paintRoute(route, theme) {
   if (polyline?.length > 1) {
     layer.routeLine = L.polyline(
       polyline.map((p) => [p.lat, p.lng]),
-      approachLineStyle(theme, colorIndex)
+      approachLineStyle(theme, colorIndex, { dual })
     ).addTo(map);
   }
 
@@ -328,7 +342,7 @@ function paintFocusRoutes(routes, { youLatLng = null, refit = true } = {}) {
 
   for (const route of routes) {
     if (!route?.id) continue;
-    routeLayers.set(route.id, paintRoute(route, theme));
+    routeLayers.set(route.id, paintRoute(route, theme, { dual }));
   }
 
   if (!dual && youLatLng) {

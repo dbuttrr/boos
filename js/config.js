@@ -63,7 +63,7 @@ export const LOCATION = {
   timezone: "Asia/Hong_Kong",
 };
 
-export const REFRESH_INTERVAL_MS = 30_000;
+export const REFRESH_INTERVAL_MS = 5_000;
 
 /**
  * Stops whose straight-line distance already exceeds this walking time
@@ -83,3 +83,6 @@ export const ARRIVING_THRESHOLD_MIN = 1;
 /** Clamp live-derived bus speed (m/min) to a sane urban band (~5–36 km/h). */
 export const MIN_BUS_SPEED_M_PER_MIN = 80;
 export const MAX_BUS_SPEED_M_PER_MIN = 600;
+
+/** Fallback speed when upstream ETA matching fails (~15 km/h). */
+export const DEFAULT_BUS_SPEED_M_PER_MIN = 250;

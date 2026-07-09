@@ -19,6 +19,7 @@ import {
   onPositionChange,
 } from "./geo.js";
 import {
+  ROUTE_COLORS,
   showFocusPanel,
   hideFocusPanel,
   updateYouMarker,
@@ -207,14 +208,46 @@ async function initNearestOrder() {
   }
 }
 
+function hexToRgba(hex, alpha) {
+  const h = hex.replace("#", "");
+  const n = parseInt(h.length === 3 ? h.replace(/(.)/g, "$1$1") : h, 16);
+  const r = (n >> 16) & 255;
+  const g = (n >> 8) & 255;
+  const b = n & 255;
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function clearRowFocusStyles(row) {
+  row.classList.remove("row--focused");
+  row.style.removeProperty("--row-focus-border");
+  row.style.removeProperty("--row-focus-bg");
+  row.style.removeProperty("--row-focus-glow");
+}
+
 function setFocusedRows(ids) {
-  cardsEl.querySelectorAll(".row--focused").forEach((row) => {
-    row.classList.remove("row--focused");
-  });
-  for (const id of ids) {
+  cardsEl.querySelectorAll(".row--focused").forEach(clearRowFocusStyles);
+
+  const theme =
+    document.documentElement.dataset.theme === "dark" ? "dark" : "light";
+  const dark = theme === "dark";
+  ids.forEach((id, colorIndex) => {
     const row = cardsEl.querySelector(`[data-id="${id}"]`);
-    row?.classList.add("row--focused");
-  }
+    if (!row) return;
+    const palette = ROUTE_COLORS[colorIndex] ?? ROUTE_COLORS[0];
+    const hex = theme === "dark" ? palette.dark : palette.light;
+    const alpha = palette.rowAlpha?.[theme] ?? {
+      border: dark ? 0.55 : 0.45,
+      bg: dark ? 0.14 : 0.12,
+      glow: dark ? 0.18 : 0.12,
+    };
+    row.classList.add("row--focused");
+    row.style.setProperty("--row-focus-border", hexToRgba(hex, alpha.border));
+    row.style.setProperty("--row-focus-bg", hexToRgba(hex, alpha.bg));
+    row.style.setProperty(
+      "--row-focus-glow",
+      `0 8px ${dark ? 28 : 24}px ${hexToRgba(hex, alpha.glow)}`
+    );
+  });
 }
 
 function selectionKey(ids = focusedIds) {
@@ -496,6 +529,23 @@ async function refreshFocusedEstimate() {
         if (!entry || !eta) return [id, focusEstimates.get(id) ?? null];
         try {
           const estimate = await estimateBusPosition(entry, eta);
+          const prior = focusEstimates.get(id);
+          // Keep last pin if this poll couldn't place the bus (but ETA still valid)
+          if (
+            !estimate?.busLatLng &&
+            prior?.busLatLng &&
+            estimate?.reason !== "no-eta"
+          ) {
+            return [
+              id,
+              {
+                ...estimate,
+                busLatLng: prior.busLatLng,
+                busCumDist: prior.busCumDist ?? estimate.busCumDist,
+                speedMPerMin: estimate.speedMPerMin ?? prior.speedMPerMin,
+              },
+            ];
+          }
           return [id, estimate];
         } catch {
           return [id, focusEstimates.get(id) ?? null];
@@ -616,6 +666,12 @@ document.addEventListener("visibilitychange", () => {
   }
 });
 
+document.addEventListener("themechange", () => {
+  if (focusedIds.length > 0) {
+    setFocusedRows(focusedIds);
+  }
+});
+
 cardsEl.addEventListener("click", (event) => {
   const row = event.target.closest(".row");
   if (!row) return;
@@ -635,8 +691,16 @@ document.getElementById("focus-panel").addEventListener("click", (event) => {
   event.stopPropagation();
 });
 
+document.getElementById("theme-toggle")?.addEventListener("click", (event) => {
+  event.stopPropagation();
+});
+
 document.getElementById("app").addEventListener("click", (event) => {
-  if (event.target.closest(".row") || event.target.closest("#focus-panel")) {
+  if (
+    event.target.closest(".row") ||
+    event.target.closest("#focus-panel") ||
+    event.target.closest("#theme-toggle")
+  ) {
     return;
   }
   refreshAll();

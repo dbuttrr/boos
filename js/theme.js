@@ -118,18 +118,63 @@ function nextTransition(date = new Date()) {
   return tomorrowTimes.sunrise;
 }
 
+const PREF_KEY = "bus-theme";
+
+function readPreference() {
+  try {
+    const value = localStorage.getItem(PREF_KEY);
+    if (value === "light" || value === "dark") return value;
+  } catch {
+    // ignore private mode / blocked storage
+  }
+  return null;
+}
+
+function writePreference(theme) {
+  try {
+    localStorage.setItem(PREF_KEY, theme);
+  } catch {
+    // ignore private mode / blocked storage
+  }
+}
+
+function clearThemeTimer() {
+  if (themeTimer) {
+    clearTimeout(themeTimer);
+    themeTimer = null;
+  }
+}
+
+function syncToggle(theme) {
+  const btn = document.getElementById("theme-toggle");
+  if (!btn) return;
+  const dark = theme === "dark";
+  btn.setAttribute("aria-pressed", dark ? "true" : "false");
+  btn.setAttribute(
+    "aria-label",
+    dark ? "Switch to light mode" : "Switch to dark mode"
+  );
+}
+
 function applyTheme() {
-  const dark = isNightInHK();
-  document.documentElement.dataset.theme = dark ? "dark" : "light";
+  const pref = readPreference();
+  const dark = pref ? pref === "dark" : isNightInHK();
+  const theme = dark ? "dark" : "light";
+
+  document.documentElement.dataset.theme = theme;
 
   const meta = document.querySelector('meta[name="theme-color"]');
   if (meta) {
     meta.content = dark ? "#0c1016" : "#eef1f6";
   }
+
+  syncToggle(theme);
+  document.dispatchEvent(new CustomEvent("themechange", { detail: { theme } }));
 }
 
 function scheduleThemeUpdate() {
-  if (themeTimer) clearTimeout(themeTimer);
+  clearThemeTimer();
+  if (readPreference()) return;
 
   const transition = nextTransition();
   const delay = Math.max(transition.getTime() - Date.now() + 1000, 1000);
@@ -140,7 +185,20 @@ function scheduleThemeUpdate() {
   }, delay);
 }
 
+function toggleTheme() {
+  const current = document.documentElement.dataset.theme === "dark" ? "dark" : "light";
+  const next = current === "dark" ? "light" : "dark";
+  writePreference(next);
+  clearThemeTimer();
+  applyTheme();
+}
+
 export function initTheme() {
   applyTheme();
   scheduleThemeUpdate();
+
+  const btn = document.getElementById("theme-toggle");
+  if (btn) {
+    btn.addEventListener("click", toggleTheme);
+  }
 }

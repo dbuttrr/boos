@@ -3,6 +3,7 @@ import {
   UPSTREAM_ETA_SAMPLE_SIZE,
   MIN_BUS_SPEED_M_PER_MIN,
   MAX_BUS_SPEED_M_PER_MIN,
+  DEFAULT_BUS_SPEED_M_PER_MIN,
 } from "./config.js";
 import {
   fetchEta,
@@ -177,6 +178,22 @@ function emptyEstimate(extra = {}) {
   };
 }
 
+function placeWithDefaultSpeed(polyline, boardingCum, minutesToBoard) {
+  const speedMPerMin = DEFAULT_BUS_SPEED_M_PER_MIN;
+  const remainingDist = speedMPerMin * minutesToBoard;
+  const busCumDist = Math.max(0, Math.min(boardingCum, boardingCum - remainingDist));
+  const busLatLng = pointAtCumDist(polyline, busCumDist);
+
+  return {
+    reason: "default-speed",
+    busCumDist,
+    busLatLng: busLatLng
+      ? { lat: busLatLng.lat, lng: busLatLng.lng }
+      : null,
+    speedMPerMin,
+  };
+}
+
 function placeFromSegments(segments, polyline, boardingCum, minutesToBoard) {
   segments.sort((a, b) => a.dist - b.dist);
   const near = segments.slice(0, Math.min(3, segments.length));
@@ -185,7 +202,7 @@ function placeFromSegments(segments, polyline, boardingCum, minutesToBoard) {
     near.reduce((sum, s) => sum + s.speed * s.weight, 0) / totalWeight;
 
   if (!Number.isFinite(rawSpeed) || rawSpeed <= 0) {
-    return { reason: "invalid-speed", busCumDist: null, busLatLng: null, speedMPerMin: null };
+    return placeWithDefaultSpeed(polyline, boardingCum, minutesToBoard);
   }
 
   const speedMPerMin = clampSpeed(rawSpeed);
@@ -368,25 +385,10 @@ export async function estimateBusPosition(entry, boardingEta) {
     });
   }
 
-  if (segments.length === 0) {
-    return {
-      polyline,
-      routePolyline,
-      boardingStop,
-      busLatLng: null,
-      busCumDist: null,
-      boardingCumDist: boardingCum,
-      stops,
-      reason: "no-upstream-match",
-    };
-  }
-
-  const placed = placeFromSegments(
-    segments,
-    polyline,
-    boardingCum,
-    minutesToBoard
-  );
+  const placed =
+    segments.length === 0
+      ? placeWithDefaultSpeed(polyline, boardingCum, minutesToBoard)
+      : placeFromSegments(segments, polyline, boardingCum, minutesToBoard);
 
   return {
     polyline,
