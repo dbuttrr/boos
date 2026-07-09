@@ -124,7 +124,7 @@ function applyTheme() {
 
   const meta = document.querySelector('meta[name="theme-color"]');
   if (meta) {
-    meta.content = dark ? "#0f1419" : "#f6f8fa";
+    meta.content = dark ? "#0c1016" : "#eef1f6";
   }
 }
 

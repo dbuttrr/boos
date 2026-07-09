@@ -11,24 +11,70 @@ html {
 :root,
 [data-theme="light"] {
   color-scheme: light;
-  --bg: #f6f8fa;
+  --bg: #eef1f6;
+  --bg-wash: radial-gradient(
+      120% 80% at 50% -10%,
+      rgba(255, 255, 255, 0.9) 0%,
+      transparent 55%
+    ),
+    linear-gradient(180deg, #f4f6fa 0%, #e8ecf3 100%);
   --text: #1f2328;
   --text-muted: #656d76;
   --text-subtle: #848d97;
   --text-faint: #afb8c1;
   --border: #d0d7de;
   --error: #cf222e;
+  --focus-selected: rgba(9, 105, 218, 0.12);
+  --focus-selected-border: rgba(9, 105, 218, 0.45);
+  --focus-accent: #0969da;
+  --focus-glass: rgba(255, 255, 255, 0.55);
+  --focus-glass-border: rgba(255, 255, 255, 0.65);
+  --focus-glass-highlight: rgba(255, 255, 255, 0.75);
+  --focus-shadow: 0 10px 28px rgba(15, 20, 25, 0.1);
+  --row-glass: rgba(255, 255, 255, 0.48);
+  --row-glass-border: rgba(255, 255, 255, 0.7);
+  --row-glass-shadow: 0 4px 16px rgba(15, 20, 25, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.85);
+  --row-glass-focused: rgba(255, 255, 255, 0.62);
+  --row-focused-glow: 0 8px 24px rgba(9, 105, 218, 0.12);
+  --focus-you: #0969da;
+  --focus-bus: #f0b429;
+  --focus-bus-b: #bf3989;
+  --focus-stop: #1f2328;
 }
 
 [data-theme="dark"] {
   color-scheme: dark;
-  --bg: #0f1419;
+  --bg: #0c1016;
+  --bg-wash: radial-gradient(
+      120% 80% at 50% -10%,
+      rgba(88, 166, 255, 0.08) 0%,
+      transparent 50%
+    ),
+    linear-gradient(180deg, #121820 0%, #0a0e14 100%);
   --text: #e8eaed;
   --text-muted: #8b949e;
   --text-subtle: #6e7681;
   --text-faint: #484f58;
   --border: #21262d;
   --error: #f85149;
+  --focus-selected: rgba(88, 166, 255, 0.16);
+  --focus-selected-border: rgba(88, 166, 255, 0.55);
+  --focus-accent: #58a6ff;
+  --focus-glass: rgba(22, 28, 36, 0.62);
+  --focus-glass-border: rgba(255, 255, 255, 0.14);
+  --focus-glass-highlight: rgba(255, 255, 255, 0.12);
+  --focus-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  --row-glass: rgba(255, 255, 255, 0.06);
+  --row-glass-border: rgba(255, 255, 255, 0.12);
+  --row-glass-shadow: 0 6px 20px rgba(0, 0, 0, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  --row-glass-focused: rgba(88, 166, 255, 0.14);
+  --row-focused-glow: 0 8px 28px rgba(88, 166, 255, 0.18);
+  --focus-you: #58a6ff;
+  --focus-bus: #f0b429;
+  --focus-bus-b: #f778ba;
+  --focus-stop: #e8eaed;
 }
 
 body {
@@ -36,6 +82,8 @@ body {
   min-height: 100dvh;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   background: var(--bg);
+  background-image: var(--bg-wash);
+  background-attachment: fixed;
   color: var(--text);
   padding: env(safe-area-inset-top) env(safe-area-inset-right)
     env(safe-area-inset-bottom) env(safe-area-inset-left);
@@ -56,37 +104,286 @@ body {
 .cards {
   display: flex;
   flex-direction: column;
-  gap: 1.25rem;
-  padding: 0 1rem 1rem;
+  gap: 1.5rem;
+  padding: 0 1rem 1.25rem;
   max-width: 36rem;
   margin: 0 auto;
 }
 
-.section__title {
-  margin: 0 0 0.375rem;
-  font-size: 0.6875rem;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--text-subtle);
-}
-
-.section__rows .row:last-child {
-  border-bottom: none;
+.route-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
 }
 
 .row {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
-  padding: 0.5rem 0;
-  border-bottom: 1px solid var(--border);
-  transition: opacity 0.2s ease;
+  padding: 0.75rem 0.875rem;
+  margin: 0;
+  border: 1px solid var(--row-glass-border);
+  border-radius: 1rem;
+  background: var(--row-glass);
+  background-image: linear-gradient(
+    135deg,
+    var(--focus-glass-highlight) 0%,
+    transparent 42%
+  );
+  box-shadow: var(--row-glass-shadow);
+  backdrop-filter: blur(18px) saturate(1.35);
+  -webkit-backdrop-filter: blur(18px) saturate(1.35);
+  cursor: pointer;
+  transition: opacity 0.2s ease, background 0.2s ease, box-shadow 0.2s ease,
+    transform 0.2s ease, border-color 0.2s ease;
+  -webkit-tap-highlight-color: transparent;
+  overflow: hidden;
+}
+
+.row::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.22) 0%,
+    transparent 40%
+  );
+  opacity: 0.7;
+}
+
+.row:active {
+  transform: scale(0.985);
 }
 
 .row--loading {
   opacity: 0.5;
+}
+
+/* Beyond a definite 20-min walk — still selectable, just quieter. */
+.row--far {
+  opacity: 0.42;
+}
+
+.row--far.row--focused {
+  opacity: 0.78;
+}
+
+.row--focused {
+  background: var(--row-glass-focused);
+  border-color: var(--focus-selected-border);
+  box-shadow: var(--row-glass-shadow),
+    0 0 0 1px var(--focus-selected-border),
+    var(--row-focused-glow);
+}
+
+.focus-panel {
+  position: sticky;
+  top: calc(env(safe-area-inset-top, 0px) + 0.625rem);
+  z-index: 20;
+  height: 50dvh;
+  margin: 0.625rem 0.75rem 0.375rem;
+  border-radius: 1.25rem;
+  overflow: hidden;
+  border: 1px solid var(--focus-glass-border);
+  background: var(--bg);
+  box-shadow: var(--focus-shadow);
+  isolation: isolate;
+}
+
+.focus-panel[hidden] {
+  display: none;
+}
+
+.focus-panel__map {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  background: var(--border);
+}
+
+/* Leaflet chrome */
+.focus-panel .leaflet-control-zoom {
+  border: 1px solid var(--focus-glass-border) !important;
+  border-radius: 0.75rem !important;
+  overflow: hidden;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
+  margin-right: 0.625rem !important;
+  margin-bottom: 0.625rem !important;
+}
+
+.focus-panel .leaflet-control-zoom a {
+  width: 2rem !important;
+  height: 2rem !important;
+  line-height: 2rem !important;
+  background: var(--focus-glass) !important;
+  color: var(--text) !important;
+  border-bottom-color: var(--focus-glass-border) !important;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.focus-panel .leaflet-control-zoom a:hover {
+  background: var(--bg) !important;
+}
+
+.focus-panel .leaflet-control-attribution {
+  margin: 0 !important;
+  padding: 0.15rem 0.4rem !important;
+  background: var(--focus-glass) !important;
+  color: var(--text-subtle) !important;
+  border-radius: 0.5rem 0 0 0;
+  font-size: 0.5625rem !important;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  max-width: 55%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.focus-panel .leaflet-control-attribution a {
+  color: var(--text-muted) !important;
+}
+
+.focus-marker {
+  background: transparent !important;
+  border: none !important;
+}
+
+.focus-marker__you {
+  position: relative;
+  display: block;
+  width: 28px;
+  height: 28px;
+}
+
+.focus-marker__pulse {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: var(--focus-you);
+  opacity: 0.35;
+  animation: focus-pulse 2s ease-out infinite;
+}
+
+.focus-marker__you-dot {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 12px;
+  height: 12px;
+  margin: -6px 0 0 -6px;
+  border-radius: 50%;
+  background: var(--focus-you);
+  border: 2.5px solid #fff;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.35);
+}
+
+@keyframes focus-pulse {
+  0% {
+    transform: scale(0.55);
+    opacity: 0.45;
+  }
+  70% {
+    transform: scale(1.35);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1.35);
+    opacity: 0;
+  }
+}
+
+.focus-marker__stop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 22px;
+  height: 30px;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.35));
+}
+
+.focus-marker__stop-head {
+  width: 16px;
+  height: 16px;
+  border-radius: 50% 50% 50% 0;
+  transform: rotate(-45deg);
+  background: var(--focus-stop);
+  border: 2.5px solid #fff;
+}
+
+.focus-marker__stop-stem {
+  width: 3px;
+  height: 6px;
+  margin-top: -2px;
+  border-radius: 1px;
+  background: var(--focus-stop);
+}
+
+.focus-marker__stop-dot {
+  display: block;
+  width: 8px;
+  height: 8px;
+  margin: 1px;
+  border-radius: 50%;
+  background: var(--text-subtle);
+  border: 1.5px solid #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  opacity: 0.85;
+}
+
+.focus-marker__bus {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  filter: drop-shadow(0 2px 5px rgba(0, 0, 0, 0.4));
+}
+
+.focus-marker__bus-body {
+  display: block;
+  width: 20px;
+  height: 14px;
+  border-radius: 4px 4px 3px 3px;
+  background: linear-gradient(180deg, #ffd666 0%, var(--focus-bus) 100%);
+  border: 2.5px solid #fff;
+  position: relative;
+  box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.12);
+}
+
+.focus-marker--bus-b .focus-marker__bus-body {
+  background: linear-gradient(180deg, #f9a8d4 0%, var(--focus-bus-b) 100%);
+}
+
+.focus-marker__bus-body::before,
+.focus-marker__bus-body::after {
+  content: "";
+  position: absolute;
+  bottom: -5px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #1f2328;
+  border: 1.5px solid #fff;
+}
+
+.focus-marker__bus-body::before {
+  left: 1px;
+}
+
+.focus-marker__bus-body::after {
+  right: 1px;
+}
+
+body.focus-active .header {
+  padding-top: 0.375rem;
 }
 
 .row__route {
