@@ -1,0 +1,97 @@
+# HK Citybus ETA
+
+A minimal mobile-first web app showing real-time Citybus arrival times for routes you care about.
+
+## Quick start
+
+**Option A — local server (recommended)**
+
+ES modules require serving over HTTP (not `file://`):
+
+```bash
+npx serve .
+```
+
+Then open the URL shown (usually `http://localhost:3000`).
+
+**Option B — any static host**
+
+Deploy the folder to GitHub Pages, Netlify, etc.
+
+## Deploy to GitHub Pages
+
+1. Create a **public** repo on GitHub (e.g. `bus`) — do not add a README or `.gitignore`.
+2. Push this project:
+
+   ```bash
+   cd /Users/daryl.sim/bus
+   git remote add origin https://github.com/YOUR_USERNAME/YOUR_REPO_NAME.git
+   git push -u origin main
+   ```
+
+3. In the repo: **Settings → Pages → Deploy from branch → `main` / `/ (root)` → Save**.
+
+Your bookmarkable URL:
+
+```
+https://YOUR_USERNAME.github.io/YOUR_REPO_NAME/
+```
+
+Changes to `js/config.js` take effect after you push and GitHub Pages redeploys (usually within a minute).
+
+## Customize routes
+
+Edit [`js/config.js`](js/config.js). Each entry is one stop + direction:
+
+```js
+{
+  id: "unique-id",
+  route: "11",           // route number
+  stopId: "001145",      // 6-digit stop ID
+  direction: "O",        // "O" = outbound, "I" = inbound (optional but recommended)
+  label: "Route 11 → Jardine's Lookout",
+}
+```
+
+Reload the page after changes.
+
+## Finding stop IDs
+
+1. **List stops on a route** — replace `{route}` and `{direction}` (`inbound` or `outbound`):
+
+   ```
+   https://rt.data.gov.hk/v2/transport/citybus/route-stop/CTB/{route}/{direction}
+   ```
+
+   Example: [Route 11 outbound stops](https://rt.data.gov.hk/v2/transport/citybus/route-stop/CTB/11/outbound)
+
+   Each item has `seq` (order along route) and `stop` (6-digit ID). Pick the stop where you board.
+
+2. **Look up stop name** (optional):
+
+   ```
+   https://rt.data.gov.hk/v2/transport/citybus/stop/{stop_id}
+   ```
+
+3. **Test ETA** before adding to config:
+
+   ```
+   https://rt.data.gov.hk/v2/transport/citybus/eta/CTB/{stop_id}/{route}
+   ```
+
+## How it works
+
+- Fetches ETAs from the [Citybus V2 API](http://citybus.com.hk/datagovhk/bus_eta_api_specifications.pdf) (`rt.data.gov.hk`)
+- Shows the next bus (`eta_seq === 1`) for the configured direction
+- Auto-refreshes every 30 seconds
+- Tap anywhere to refresh manually
+
+## CORS
+
+The data.gov.hk API allows cross-origin requests (`Access-Control-Allow-Origin: *`), so the app calls it directly from the browser with no backend.
+
+If you ever hit CORS issues in a restricted environment, serve the app over HTTP (not `file://`) using `npx serve .`.
+
+## Data source
+
+Real-time ETA data provided by [Citybus Limited](https://www.citybus.com.hk) via [data.gov.hk](https://data.gov.hk).
