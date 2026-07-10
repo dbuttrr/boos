@@ -104,3 +104,10 @@ export const BUS_REPOSITION_MIN_M = 5;
 
 /** Max meters a same-bus ETA revision may move the marker backward. */
 export const MAX_BUS_REWIND_M = 400;
+
+/**
+ * Idle GPS follow window as a fraction of the top-half active area (0–1).
+ * Marker always moves; map recenters only when you leave this soft region
+ * (Maps/Uber-style), measured from the top-half visual center.
+ */
+export const IDLE_FOLLOW_WINDOW = 0.45;

@@ -1,4 +1,4 @@
-import { BUS_MARKER_LERP, LOCATION } from "./config.js";
+import { BUS_MARKER_LERP, IDLE_FOLLOW_WINDOW, LOCATION } from "./config.js";
 
 let map = null;
 let tileLayer = null;
@@ -154,8 +154,8 @@ export function youIcon() {
   return L.divIcon({
     className: "focus-marker focus-marker--you",
     html: `<span class="focus-marker__you"><span class="focus-marker__pulse"></span><span class="focus-marker__you-dot"></span></span>`,
-    iconSize: [28, 28],
-    iconAnchor: [14, 14],
+    iconSize: [36, 36],
+    iconAnchor: [18, 18],
   });
 }
 
@@ -252,14 +252,37 @@ function activeAreaPadding() {
 
 /**
  * Place a latlng at the center of the top half (not the full viewport center).
- * setView centers on the container midpoint; panBy shifts the point up into the active area.
+ * Computes a single target center so setView can animate smoothly (no snap + panBy).
  */
 function centerInActiveArea(latlng, zoom = IDLE_ZOOM, { animate = true } = {}) {
   if (!map || !latlng) return;
   map.invalidateSize({ animate: false });
-  map.setView([latlng.lat, latlng.lng], zoom, { animate: false });
+  const z = zoom ?? map.getZoom() ?? IDLE_ZOOM;
   const size = map.getSize();
-  map.panBy([0, size.y / 4], { animate });
+  if (size.x === 0 || size.y === 0) {
+    map.setView([latlng.lat, latlng.lng], z, { animate: false });
+    return;
+  }
+  // setView centers on the container midpoint; offset south so latlng sits at y = size.y/4.
+  const point = map.project([latlng.lat, latlng.lng], z);
+  const target = map.unproject(point.add([0, size.y / 4]), z);
+  map.setView(target, z, { animate });
+}
+
+/**
+ * True while `latlng` is inside the soft follow window around the top-half center.
+ * Used for Maps/Uber-style idle follow (marker moves; camera only when you leave).
+ */
+function isYouInFollowWindow(latlng) {
+  if (!map || !latlng) return false;
+  const size = map.getSize();
+  if (size.x === 0 || size.y === 0) return false;
+  const pt = map.latLngToContainerPoint([latlng.lat, latlng.lng]);
+  const cx = size.x / 2;
+  const cy = size.y / 4;
+  const halfW = (size.x / 2) * IDLE_FOLLOW_WINDOW;
+  const halfH = (size.y / 4) * IDLE_FOLLOW_WINDOW;
+  return Math.abs(pt.x - cx) <= halfW && Math.abs(pt.y - cy) <= halfH;
 }
 
 async function ensureMap() {
@@ -558,16 +581,20 @@ function scheduleFitToMarkers({ includeYou = true, animate = true } = {}) {
 }
 
 /**
- * Idle GPS follow: keep you centered in the top-half active area.
- * No-ops while a route is focused.
+ * Idle GPS follow (Maps/Uber-style): always move the you marker; recenter into
+ * the top-half active area only when you leave the soft follow window (or on
+ * first fix / force). No-ops while a route is focused.
  */
 export function followYouInActiveArea(
   youLatLng,
-  { animate = true, showMarker = true } = {}
+  { animate = true, showMarker = true, force = false } = {}
 ) {
   if (!map || !youLatLng || focusActive || !idleFollow) return;
+  const isNew = !youMarker;
   if (showMarker) ensureYouMarker(youLatLng);
-  centerInActiveArea(youLatLng, map.getZoom() || IDLE_ZOOM, { animate });
+  if (force || isNew || !isYouInFollowWindow(youLatLng)) {
+    centerInActiveArea(youLatLng, map.getZoom() || IDLE_ZOOM, { animate });
+  }
 }
 
 function paintRoute(route, theme, { dual = false } = {}) {

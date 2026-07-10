@@ -96,7 +96,7 @@ See [docs/PRD.md](docs/PRD.md) for full product behavior. Summary:
 - Shows the next 1–2 upcoming arrivals per watchlisted stop + direction
 - Auto-refreshes every 5 seconds; tap empty watch-sheet padding (outside rows) to refresh manually
 - Sorts by distance when geolocation is available; dims stops beyond ~20 min walk
-- Full-bleed map follows GPS in the top half; tap rows to fit you, stops, and estimated buses there (any number of routes)
+- Full-bleed map: idle GPS follow is Maps/Uber-style (marker moves; camera recenters only when you leave a soft top-half window); tap rows to fit you, stops, and estimated buses there (any number of routes)
 - Light/dark theme (auto by HK sunrise/sunset, or manual toggle)
 
 ## CORS

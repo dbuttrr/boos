@@ -327,8 +327,8 @@ body {
 .focus-marker__you {
   position: relative;
   display: block;
-  width: 28px;
-  height: 28px;
+  width: 36px;
+  height: 36px;
 }
 
 .focus-marker__pulse {
@@ -344,12 +344,12 @@ body {
   position: absolute;
   top: 50%;
   left: 50%;
-  width: 12px;
-  height: 12px;
-  margin: -6px 0 0 -6px;
+  width: 15px;
+  height: 15px;
+  margin: -7.5px 0 0 -7.5px;
   border-radius: 50%;
   background: var(--focus-you);
-  border: 2.5px solid var(--focus-marker-border);
+  border: 3px solid var(--focus-marker-border);
   box-shadow: 0 1px 6px rgba(0, 0, 0, 0.35);
 }
 
