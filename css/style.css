@@ -39,6 +39,9 @@ html {
   --row-glass-focused: rgba(255, 255, 255, 0.62);
   --row-focused-glow: 0 8px 24px rgba(9, 105, 218, 0.12);
   --glass-sheen: rgba(255, 255, 255, 0.22);
+  --radius-watch-sheet: 2.25rem;
+  --radius-row: 1.5rem;
+  --radius-row-delete: 1.25rem;
   --focus-you: #0969da;
   --focus-bus: #0969da;
   --focus-bus-top: #58a6ff;
@@ -145,7 +148,7 @@ body {
   flex-direction: column;
   height: 48dvh;
   max-height: 48dvh;
-  border-radius: 2rem;
+  border-radius: var(--radius-watch-sheet);
   border: 1px solid var(--focus-glass-border);
   background: var(--watch-sheet-glass, var(--focus-glass));
   background-image: linear-gradient(
@@ -217,7 +220,7 @@ body {
   margin: 0;
   padding: 0;
   border: none;
-  border-radius: 1.375rem;
+  border-radius: var(--radius-row);
   background: transparent;
   box-shadow: none;
   cursor: pointer;
@@ -244,7 +247,7 @@ body {
   margin: 0;
   padding: 0 0.4rem;
   border: none;
-  border-radius: 1.125rem;
+  border-radius: var(--radius-row-delete);
   background: var(--error);
   color: #fff;
   font-size: 0.8125rem;
@@ -282,7 +285,7 @@ body {
   padding: 0.75rem 0.875rem;
   margin: 0;
   border: 1px solid var(--row-glass-border);
-  border-radius: 1.375rem;
+  border-radius: var(--radius-row);
   background: var(--row-glass);
   background-image: linear-gradient(
     135deg,
