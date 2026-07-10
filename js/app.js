@@ -1,5 +1,6 @@
 import { initTheme } from "./theme.js";
 import {
+  LOCATION,
   REFRESH_INTERVAL_MS,
   FOCUS_REFRESH_INTERVAL_MS,
   ARRIVING_THRESHOLD_MIN,
@@ -44,6 +45,7 @@ import {
 } from "./geo.js";
 import {
   ROUTE_COLORS,
+  initMapStage,
   showFocusPanel,
   hideFocusPanel,
   updateYouMarker,
@@ -51,6 +53,7 @@ import {
   dissolveBusMarker,
   updateFocusOverlays,
   isFocusPanelVisible,
+  followYouInActiveArea,
   prefetchLeaflet,
 } from "./map.js";
 import { showPickerMap, setPickerPath, destroyPickerMap } from "./picker.js";
@@ -319,7 +322,8 @@ function setFocusedRows(ids) {
   ids.forEach((id, colorIndex) => {
     const row = cardsEl.querySelector(`[data-id="${id}"]`);
     if (!row) return;
-    const palette = ROUTE_COLORS[colorIndex] ?? ROUTE_COLORS[0];
+    const palette =
+      ROUTE_COLORS[colorIndex % ROUTE_COLORS.length] ?? ROUTE_COLORS[0];
     const hex = theme === "dark" ? palette.dark : palette.light;
     const alpha = palette.rowAlpha?.[theme] ?? {
       border: dark ? 0.55 : 0.45,
@@ -334,6 +338,14 @@ function setFocusedRows(ids) {
       `0 8px ${dark ? 28 : 24}px ${hexToRgba(hex, alpha.glow)}`
     );
   });
+  syncDockClearButton(ids.length > 0);
+}
+
+function syncDockClearButton(clearMode) {
+  const btn = document.getElementById("add-route-btn");
+  if (!btn) return;
+  btn.classList.toggle("nav-dock__add--clear", clearMode);
+  btn.setAttribute("aria-label", clearMode ? "Clear selection" : "Add route");
 }
 
 function selectionKey(ids = focusedIds) {
@@ -732,7 +744,7 @@ function routesFromEstimates(ids, estimatesById) {
     const estimate = estimatesById.get(id);
     return {
       id,
-      colorIndex,
+      colorIndex: colorIndex % ROUTE_COLORS.length,
       boardingStop: estimate?.boardingStop ?? null,
       busLatLng: estimate?.busLatLng ?? null,
       busAppearing: Boolean(estimate?.busAppearing),
@@ -752,12 +764,11 @@ async function syncFocusMap({ refit = true } = {}) {
   focusEstimates.clear();
 
   if (ids.length === 0) {
-    hideFocusPanel();
+    hideFocusPanel({ youLatLng: getLastPosition() });
     return;
   }
 
-  const dual = ids.length >= 2;
-  const youLatLng = dual ? null : getLastPosition();
+  const youLatLng = getLastPosition();
 
   const quickRoutes = await Promise.all(
     ids.map(async (id, colorIndex) => {
@@ -778,7 +789,7 @@ async function syncFocusMap({ refit = true } = {}) {
       }
       return {
         id,
-        colorIndex,
+        colorIndex: colorIndex % ROUTE_COLORS.length,
         boardingStop,
         busLatLng: null,
         polyline: [],
@@ -804,14 +815,12 @@ async function syncFocusMap({ refit = true } = {}) {
     });
   }
 
-  if (!dual) {
-    startGeolocation().then((you) => {
-      if (token !== focusToken || selectionKey() !== key) return;
-      if (focusedIds.length !== 1) return;
-      const pos = you ?? getLastPosition();
-      if (pos) updateYouMarker(pos, { refit: true });
-    });
-  }
+  startGeolocation().then((you) => {
+    if (token !== focusToken || selectionKey() !== key) return;
+    if (focusedIds.length === 0) return;
+    const pos = you ?? getLastPosition();
+    if (pos) updateYouMarker(pos, { refit: true });
+  });
 
   const estimates = await Promise.all(
     ids.map(async (id) => {
@@ -830,7 +839,7 @@ async function syncFocusMap({ refit = true } = {}) {
 
   updateFocusOverlays({
     routes: routesFromEstimates(ids, estimatesById),
-    youLatLng: dual ? null : getLastPosition(),
+    youLatLng: getLastPosition(),
     refit,
   });
 
@@ -844,7 +853,7 @@ function exitFocus() {
   lastFocusFullRefreshAt = 0;
   stopBusAnimation();
   setFocusedRows([]);
-  hideFocusPanel();
+  hideFocusPanel({ youLatLng: getLastPosition() });
 }
 
 async function toggleFocus(entryId) {
@@ -864,11 +873,6 @@ async function toggleFocus(entryId) {
     return;
   }
 
-  if (focusedIds.length >= 2) {
-    exitFocus();
-    return;
-  }
-
   focusedIds = [...focusedIds, entryId];
   await syncFocusMap({ refit: true });
 }
@@ -879,7 +883,6 @@ async function refreshFocusedEstimate({ refreshUpstream = true } = {}) {
   const token = focusToken;
   const ids = [...focusedIds];
   const key = selectionKey(ids);
-  const dual = ids.length >= 2;
 
   try {
     const estimates = await Promise.all(
@@ -999,7 +1002,7 @@ async function refreshFocusedEstimate({ refreshUpstream = true } = {}) {
 
     updateFocusOverlays({
       routes: routesFromEstimates(ids, estimatesById),
-      youLatLng: dual ? null : getLastPosition(),
+      youLatLng: getLastPosition(),
       refit: false,
     });
     startBusAnimations(estimatesById, token);
@@ -1188,7 +1191,7 @@ function updateAddConfirmState() {
   const stop = addState.selectedStop;
   if (!stop || !addState.route || !addState.direction) {
     addConfirmBtnEl.disabled = true;
-    addSelectionLabelEl.textContent = "Select a stop";
+    addSelectionLabelEl.textContent = "";
     return;
   }
 
@@ -1242,7 +1245,7 @@ function resetAddState() {
   addDirectionFieldsetEl.disabled = true;
   setDirectionButtons(null);
   updateDirectionLabels(null);
-  addMapEl.classList.remove("add-sheet__map--ready");
+  addMapEl.classList.remove("add-sheet__map--ready", "add-sheet__map--dimmed");
   destroyPickerMap();
   setAddError("");
   updateAddConfirmState();
@@ -1256,6 +1259,19 @@ function closeAddSheet() {
   addSheetEl.hidden = true;
   document.body.classList.remove("add-sheet-open");
   resetAddState();
+}
+
+async function showAddMapPreview() {
+  if (!isAddSheetOpen()) return;
+  const token = addState.loadToken;
+  addMapEl.classList.add("add-sheet__map--ready", "add-sheet__map--dimmed");
+  await yieldToPaint();
+  if (!isAddSheetOpen() || token !== addState.loadToken) return;
+  await showPickerMap({
+    stops: [],
+    youLatLng: getLastPosition() ?? LOCATION,
+    isStale: () => token !== addState.loadToken || !isAddSheetOpen(),
+  });
 }
 
 async function openAddSheet() {
@@ -1274,6 +1290,7 @@ async function openAddSheet() {
   addRouteInputEl.focus();
   startGeolocation();
   prefetchRouteCatalog();
+  await showAddMapPreview();
 }
 
 async function validateAndLoadRoute(routeValue) {
@@ -1288,10 +1305,9 @@ async function validateAndLoadRoute(routeValue) {
     addDirectionFieldsetEl.disabled = true;
     setDirectionButtons(null);
     updateDirectionLabels(null);
-    addMapEl.classList.remove("add-sheet__map--ready");
-    destroyPickerMap();
     setAddError("");
     updateAddConfirmState();
+    if (isAddSheetOpen()) await showAddMapPreview();
     return;
   }
 
@@ -1305,9 +1321,8 @@ async function validateAndLoadRoute(routeValue) {
     addDirectionFieldsetEl.disabled = false;
     updateDirectionLabels(meta);
     setDirectionButtons(null);
-    addMapEl.classList.remove("add-sheet__map--ready");
-    destroyPickerMap();
     updateAddConfirmState();
+    if (isAddSheetOpen()) await showAddMapPreview();
   } catch {
     addState.route = "";
     addState.routeMeta = null;
@@ -1316,10 +1331,9 @@ async function validateAndLoadRoute(routeValue) {
     addDirectionFieldsetEl.disabled = true;
     setDirectionButtons(null);
     updateDirectionLabels(null);
-    addMapEl.classList.remove("add-sheet__map--ready");
-    destroyPickerMap();
     setAddError(`Route ${route} not found`);
     updateAddConfirmState();
+    if (isAddSheetOpen()) await showAddMapPreview();
   }
 }
 
@@ -1333,9 +1347,6 @@ async function loadPickerForDirection(direction) {
   setAddError("");
   updateAddConfirmState();
 
-  addMapEl.classList.remove("add-sheet__map--ready");
-  destroyPickerMap();
-
   try {
     const routeStops = await fetchRouteStops(addState.route, direction);
     const stops = await resolveRouteStopCoords(routeStops);
@@ -1343,10 +1354,12 @@ async function loadPickerForDirection(direction) {
 
     if (!stops.length) {
       setAddError("No stops found for this direction");
+      if (isAddSheetOpen()) await showAddMapPreview();
       return;
     }
 
     addMapEl.classList.add("add-sheet__map--ready");
+    addMapEl.classList.remove("add-sheet__map--dimmed");
     // Let flex give the map a real height before Leaflet measures it.
     await yieldToPaint();
     if (token !== addState.loadToken || !isAddSheetOpen()) return;
@@ -1362,6 +1375,7 @@ async function loadPickerForDirection(direction) {
         updateAddConfirmState();
       },
       onPositionChange: onPositionChange,
+      isStale: () => token !== addState.loadToken || !isAddSheetOpen(),
     });
 
     if (token !== addState.loadToken || !isAddSheetOpen()) return;
@@ -1380,6 +1394,7 @@ async function loadPickerForDirection(direction) {
   } catch (err) {
     if (token !== addState.loadToken) return;
     setAddError(err.message || "Failed to load stops");
+    if (isAddSheetOpen()) await showAddMapPreview();
   }
 }
 
@@ -1484,12 +1499,24 @@ function clearLongPress() {
 
 ensureRows();
 initTheme();
+initMapStage({
+  center: LOCATION,
+  youLatLng: getLastPosition(),
+})
+  .then(() => {
+    const pos = getLastPosition();
+    if (pos) followYouInActiveArea(pos, { animate: false });
+  })
+  .catch((err) => console.warn("Map init failed", err));
 refreshAll();
 startAutoRefresh();
 initNearestOrder();
 
 onPositionChange((pos) => {
-  if (focusedIds.length === 1 && pos && isFocusPanelVisible()) {
+  if (!pos) return;
+  if (focusedIds.length === 0) {
+    followYouInActiveArea(pos, { animate: true });
+  } else if (focusedIds.length > 0 && isFocusPanelVisible()) {
     updateYouMarker(pos, { refit: false });
   }
   applyWalkability(pos);
@@ -1510,6 +1537,10 @@ document.addEventListener("themechange", () => {
 
 document.getElementById("add-route-btn")?.addEventListener("click", (event) => {
   event.stopPropagation();
+  if (focusedIds.length > 0) {
+    exitFocus();
+    return;
+  }
   openAddSheet();
 });
 
@@ -1618,7 +1649,7 @@ cardsEl.addEventListener("pointerleave", (event) => {
   if (event.target.closest(".row")) clearLongPress();
 });
 
-document.getElementById("focus-panel").addEventListener("click", (event) => {
+document.getElementById("map-stage")?.addEventListener("click", (event) => {
   event.stopPropagation();
 });
 
@@ -1633,8 +1664,9 @@ document.getElementById("app").addEventListener("click", (event) => {
 
   if (
     event.target.closest(".row") ||
-    event.target.closest("#focus-panel") ||
+    event.target.closest("#map-stage") ||
     event.target.closest(".nav-dock") ||
+    event.target.closest(".theme-toggle") ||
     event.target.closest("#add-sheet")
   ) {
     return;

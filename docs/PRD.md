@@ -14,14 +14,14 @@ Personal use: mobile, Hong Kong, checking ETAs before leaving home or office.
 
 1. See the next 1–2 arrivals for each watchlisted stop + direction.
 2. Know which options are realistically walkable (stops beyond ~20 min crow-flies are dimmed).
-3. Compare 1–2 routes on a map with estimated bus position along the road.
+3. Compare routes on a map with estimated bus position along the road.
 4. Refresh automatically and on tap; resume when returning to the tab.
 
 ## Current behavior (shipped)
 
 ### Watchlist editing
 
-- Bottom floating dock **+** opens add sheet: enter route → pick direction → tap stop on map.
+- Circular **+** (floating above the watch-sheet, no outer dock pill) opens add sheet: enter route → pick direction → tap stop on map. The sheet map is visible immediately (dimmed, non-interactive preview centered on you); choosing a direction undims it and enables stop picking. While routes are focused, the same control becomes clear-all **×** (scale pulse + slight red tint).
 - Sheet paints immediately; route catalog stays in memory (idle-prefetched). Typing shows up to 8 prefix-matched suggestions — no full-route datalist in the DOM.
 - Map shows OSRM road-snapped route polyline (same as focus map), all stops on that direction, and your location when available; paints stop-to-stop first then upgrades the path; viewport auto-fits the full path.
 - Added routes persist in browser localStorage; `js/config.js` seeds the list on first visit.
@@ -34,7 +34,7 @@ Personal use: mobile, Hong Kong, checking ETAs before leaving home or office.
 - Remarks (e.g. "No scheduled service") shown when API returns no upcoming ETA.
 - Errors shown inline per row.
 - Auto-refresh every 5 seconds (`REFRESH_INTERVAL_MS`).
-- Tap outside rows / header to refresh manually.
+- Tap outside rows (empty watch-sheet padding) to refresh manually.
 - Refreshes when tab becomes visible again.
 
 ### Location-aware sorting
@@ -45,11 +45,13 @@ Personal use: mobile, Hong Kong, checking ETAs before leaving home or office.
 
 ### Focus map
 
-- Tap a row to open map panel with boarding stop pin.
-- On select (and when the bus or you marker first appears), the map auto-fits to frame your location, the boarding stop, and the estimated bus — deferred until layout settles so Leaflet has a real size.
-- Single focus: shows "you" marker when geolocation available; road-following route polyline; estimated bus position with smooth animation between polls.
-- Dual focus (up to 2 routes): side-by-side route comparison; no "you" marker; fit frames boarding stops + buses only.
-- Third selection clears focus; deselecting last row closes panel.
+- Full-bleed Leaflet map fills the viewport; watchlist sits in a liquid-glass sheet (`.watch-sheet`) over the bottom half.
+- Idle (no row selected): continuously follows GPS, centered in the **top-half** active area (falls back to `LOCATION` in `config.js` until a fix arrives).
+- Tap a row to focus (tap again to deselect): map auto-fits your location, the boarding stop(s), and the estimated bus(es) into the top-half active area (asymmetric `fitBounds` padding / pan offset so the glass sheet does not cover framed markers) — deferred until layout settles so Leaflet has a real size.
+- Any number of routes can be focused at once; row/map colors cycle through a 6-color `ROUTE_COLORS` palette (blue, yellow, green, coral, violet, teal).
+- While one or more routes are focused, the **+** morphs into a clear **×** (rotate + scale pulse, slight red background); tapping it deselects all focused routes and returns to idle GPS follow.
+- Focus always shows the "you" marker when geolocation is available; road-following route polylines; estimated bus positions with smooth animation between polls. Multi-select uses slightly lower line opacity so overlapping paths stay readable.
+- Deselecting the last focused row returns to idle GPS follow (map stays visible).
 - Bus position derived from upstream stop ETAs + OSRM road-snapped polylines.
 - Focus map syncs tracking clock to Citybus `data_timestamp` / `generated_timestamp` (not raw device time).
 - Focus map fetches ETAs at all upstream approach stops and interpolates position along the active stop-to-stop segment.
@@ -69,7 +71,7 @@ Personal use: mobile, Hong Kong, checking ETAs before leaving home or office.
 
 ### Theme
 
-- Light/dark mode via toggle in the bottom floating dock (with **+**); auto-schedules by Hong Kong sunrise/sunset when no manual preference saved.
+- Light/dark mode via toggle fixed on the right above the watch-sheet (separate from the centered **+** / clear **×**); auto-schedules by Hong Kong sunrise/sunset when no manual preference saved.
 - Map tiles and row focus colors follow theme.
 
 ### Data & caching
@@ -109,7 +111,6 @@ Personal use: mobile, Hong Kong, checking ETAs before leaving home or office.
 
 ## Open questions
 
-- Is dual-route compare (max 2) the right limit?
 - Should refresh interval stay at 5 s or back off when tab hidden?
 - Worth a public demo watchlist separate from personal `config.js`?
 

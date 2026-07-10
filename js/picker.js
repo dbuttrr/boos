@@ -84,11 +84,21 @@ function fitPickerBounds({ animate = true } = {}) {
   } else if (lastStops.length) {
     bounds = L.latLngBounds(lastStops.map((s) => [s.lat, s.lng]));
   }
-  if (!bounds || !bounds.isValid()) return;
 
   if (lastYouLatLng) {
-    bounds.extend([lastYouLatLng.lat, lastYouLatLng.lng]);
+    if (bounds && bounds.isValid()) {
+      bounds.extend([lastYouLatLng.lat, lastYouLatLng.lng]);
+    } else {
+      pickerMap.setView(
+        [lastYouLatLng.lat, lastYouLatLng.lng],
+        15,
+        { animate }
+      );
+      return;
+    }
   }
+
+  if (!bounds || !bounds.isValid()) return;
 
   if (bounds.getNorthEast().equals(bounds.getSouthWest())) {
     pickerMap.setView(bounds.getCenter(), 15, { animate });
@@ -190,7 +200,7 @@ export function setPickerPath(path) {
 
 /**
  * Show route stops on the picker map. Calls onSelect(stop) when user taps a stop.
- * @param {{ stops: object[], path?: object[], youLatLng?: object|null, onSelect?: Function, onPositionChange?: Function }} options
+ * @param {{ stops: object[], path?: object[], youLatLng?: object|null, onSelect?: Function, onPositionChange?: Function, isStale?: () => boolean }} options
  */
 export async function showPickerMap({
   stops = [],
@@ -198,6 +208,7 @@ export async function showPickerMap({
   youLatLng = null,
   onSelect = null,
   onPositionChange = null,
+  isStale = () => false,
 } = {}) {
   onSelectCallback = onSelect;
   selectedStopId = null;
@@ -210,7 +221,9 @@ export async function showPickerMap({
   }
 
   await ensurePickerMap();
+  if (isStale()) return;
   await new Promise((r) => requestAnimationFrame(() => r()));
+  if (isStale()) return;
   pickerMap.invalidateSize({ animate: false });
 
   clearPickerLayers();

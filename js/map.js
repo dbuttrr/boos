@@ -1,4 +1,4 @@
-import { BUS_MARKER_LERP } from "./config.js";
+import { BUS_MARKER_LERP, LOCATION } from "./config.js";
 
 let map = null;
 let tileLayer = null;
@@ -12,6 +12,12 @@ let fitFrame = 0;
 let leafletReady = null;
 let themeObserver = null;
 let currentTheme = null;
+/** Route focus overlays are painted (vs idle GPS-follow). */
+let focusActive = false;
+/** Recenter GPS into the top-half active area while idle. */
+let idleFollow = true;
+const IDLE_ZOOM = 15;
+const DEFAULT_CENTER = { lat: LOCATION.lat, lng: LOCATION.lng };
 
 export const CARTO_ATTR =
   '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/attributions">CARTO</a>';
@@ -37,9 +43,48 @@ export const ROUTE_COLORS = [
       dark: { border: 0.85, bg: 0.22, glow: 0.28 },
     },
   },
+  {
+    light: "#1a7f37",
+    dark: "#3fb950",
+    busClass: "focus-marker--bus-c",
+    lineOpacity: { single: 0.7, dual: 0.5 },
+    rowAlpha: {
+      light: { border: 0.5, bg: 0.14, glow: 0.14 },
+      dark: { border: 0.6, bg: 0.16, glow: 0.2 },
+    },
+  },
+  {
+    light: "#cf222e",
+    dark: "#f85149",
+    busClass: "focus-marker--bus-d",
+    lineOpacity: { single: 0.7, dual: 0.5 },
+    rowAlpha: {
+      light: { border: 0.5, bg: 0.14, glow: 0.14 },
+      dark: { border: 0.6, bg: 0.16, glow: 0.2 },
+    },
+  },
+  {
+    light: "#8250df",
+    dark: "#a371f7",
+    busClass: "focus-marker--bus-e",
+    lineOpacity: { single: 0.7, dual: 0.5 },
+    rowAlpha: {
+      light: { border: 0.5, bg: 0.14, glow: 0.14 },
+      dark: { border: 0.6, bg: 0.16, glow: 0.2 },
+    },
+  },
+  {
+    light: "#0891b2",
+    dark: "#39c5e0",
+    busClass: "focus-marker--bus-f",
+    lineOpacity: { single: 0.7, dual: 0.5 },
+    rowAlpha: {
+      light: { border: 0.5, bg: 0.14, glow: 0.14 },
+      dark: { border: 0.6, bg: 0.16, glow: 0.2 },
+    },
+  },
 ];
 
-const panelEl = () => document.getElementById("focus-panel");
 const mapEl = () => document.getElementById("focus-map");
 
 function getAppTheme() {
@@ -195,6 +240,28 @@ function watchTheme() {
   });
 }
 
+/** Padding so fitBounds frames content into the top-half active area. */
+function activeAreaPadding() {
+  const size = map.getSize();
+  const bottomInset = Math.round(size.y * 0.5);
+  return {
+    paddingTopLeft: [40, 48],
+    paddingBottomRight: [40, bottomInset + 16],
+  };
+}
+
+/**
+ * Place a latlng at the center of the top half (not the full viewport center).
+ * setView centers on the container midpoint; panBy shifts the point up into the active area.
+ */
+function centerInActiveArea(latlng, zoom = IDLE_ZOOM, { animate = true } = {}) {
+  if (!map || !latlng) return;
+  map.invalidateSize({ animate: false });
+  map.setView([latlng.lat, latlng.lng], zoom, { animate: false });
+  const size = map.getSize();
+  map.panBy([0, size.y / 4], { animate });
+}
+
 async function ensureMap() {
   const L = await loadLeaflet();
   if (map) {
@@ -211,12 +278,40 @@ async function ensureMap() {
 
   L.control
     .zoom({
-      position: "bottomright",
+      position: "topright",
     })
     .addTo(map);
 
   applyTileTheme(getAppTheme());
   watchTheme();
+  map.setView([DEFAULT_CENTER.lat, DEFAULT_CENTER.lng], IDLE_ZOOM, {
+    animate: false,
+  });
+  return map;
+}
+
+/**
+ * Mount the full-bleed map and show the idle (top-half) view.
+ * @param {{ center?: { lat: number, lng: number }, youLatLng?: { lat: number, lng: number } | null }} [opts]
+ */
+export async function initMapStage({
+  center = DEFAULT_CENTER,
+  youLatLng = null,
+} = {}) {
+  await ensureMap();
+  await new Promise((r) => requestAnimationFrame(() => r()));
+  map.invalidateSize({ animate: false });
+
+  focusActive = false;
+  idleFollow = true;
+  document.body.classList.remove("focus-active");
+
+  if (youLatLng) {
+    ensureYouMarker(youLatLng);
+    centerInActiveArea(youLatLng, IDLE_ZOOM, { animate: false });
+  } else {
+    centerInActiveArea(center, IDLE_ZOOM, { animate: false });
+  }
   return map;
 }
 
@@ -279,7 +374,7 @@ function setBusMarkerPosition(
   busLatLng,
   { smooth = false, dissolve = false, appear = false } = {}
 ) {
-  if (!map || panelEl().hidden) return;
+  if (!map || !focusActive) return;
   const layer = routeLayers.get(routeId);
   if (!layer) return;
   const L = window.L;
@@ -311,7 +406,7 @@ function setBusMarkerPosition(
       targetLng: busLatLng.lng,
     });
     // Bus often appears after the first paint — frame you + stop + bus.
-    scheduleFitToMarkers({ includeYou: routeLayers.size < 2 });
+    scheduleFitToMarkers({ includeYou: true });
     return;
   }
 
@@ -388,24 +483,34 @@ function dissolveBusMarkerElement(layer, routeId) {
 
 /** Dissolve then remove the bus marker for a route. */
 export function dissolveBusMarker(routeId) {
-  if (!map || panelEl().hidden) return Promise.resolve();
+  if (!map || !focusActive) return Promise.resolve();
   const layer = routeLayers.get(routeId);
   if (!layer?.busMarker) return Promise.resolve();
   busChase.delete(routeId);
   return dissolveBusMarkerElement(layer, routeId);
 }
 
-function clearOverlays() {
+function clearRouteOverlays() {
   if (!map) return;
   stopBusChase();
-  if (youMarker) {
-    map.removeLayer(youMarker);
-    youMarker = null;
-  }
   for (const layer of routeLayers.values()) {
     clearRouteLayer(layer);
   }
   routeLayers.clear();
+}
+
+function ensureYouMarker(youLatLng) {
+  if (!map || !youLatLng || !window.L) return;
+  const L = window.L;
+  if (youMarker) {
+    youMarker.setLatLng([youLatLng.lat, youLatLng.lng]);
+    return;
+  }
+  youMarker = L.marker([youLatLng.lat, youLatLng.lng], {
+    icon: youIcon(),
+    title: "You",
+    zIndexOffset: 300,
+  }).addTo(map);
 }
 
 function fitVisible(points, { animate = true } = {}) {
@@ -413,14 +518,13 @@ function fitVisible(points, { animate = true } = {}) {
   const L = window.L;
   map.invalidateSize({ animate: false });
   if (points.length === 1) {
-    map.setView([points[0].lat, points[0].lng], 15, { animate });
+    centerInActiveArea(points[0], IDLE_ZOOM, { animate });
     return;
   }
   const bounds = L.latLngBounds(points.map((p) => [p.lat, p.lng]));
-  // Extra bottom pad clears zoom controls on the short 50dvh panel.
+  const pad = activeAreaPadding();
   map.fitBounds(bounds, {
-    paddingTopLeft: [40, 40],
-    paddingBottomRight: [40, 64],
+    ...pad,
     maxZoom: 16,
     animate,
   });
@@ -436,21 +540,34 @@ function collectMarkerPoints({ includeYou = true } = {}) {
   return points;
 }
 
-/** Refit the map to current stop / bus / you markers. */
+/** Refit the map to current stop / bus / you markers (top-half active area). */
 export function fitToMarkers({ includeYou = true, animate = true } = {}) {
   fitVisible(collectMarkerPoints({ includeYou }), { animate });
 }
 
-/** Fit after layout settles (panel open / marker paint). */
+/** Fit after layout settles (focus paint / marker appear). */
 function scheduleFitToMarkers({ includeYou = true, animate = true } = {}) {
   if (fitFrame) cancelAnimationFrame(fitFrame);
   fitFrame = requestAnimationFrame(() => {
     fitFrame = requestAnimationFrame(() => {
       fitFrame = 0;
-      if (!map || panelEl().hidden) return;
+      if (!map || !focusActive) return;
       fitVisible(collectMarkerPoints({ includeYou }), { animate });
     });
   });
+}
+
+/**
+ * Idle GPS follow: keep you centered in the top-half active area.
+ * No-ops while a route is focused.
+ */
+export function followYouInActiveArea(
+  youLatLng,
+  { animate = true, showMarker = true } = {}
+) {
+  if (!map || !youLatLng || focusActive || !idleFollow) return;
+  if (showMarker) ensureYouMarker(youLatLng);
+  centerInActiveArea(youLatLng, map.getZoom() || IDLE_ZOOM, { animate });
 }
 
 function paintRoute(route, theme, { dual = false } = {}) {
@@ -524,23 +641,27 @@ function paintRoute(route, theme, { dual = false } = {}) {
 }
 
 /**
- * Paint one or two focused routes.
- * Dual-select (2 routes): hide you pin and fit to buses + boarding stops only.
+ * Paint one or more focused routes.
+ * Always shows the you pin when youLatLng is provided; multi-select uses lower line opacity.
  */
 function paintFocusRoutes(routes, { youLatLng = null, refit = true } = {}) {
   if (!map) return;
   const L = window.L;
   const theme = getAppTheme();
-  const dual = routes.length >= 2;
+  const multi = routes.length >= 2;
 
-  clearOverlays();
+  clearRouteOverlays();
+  if (youMarker) {
+    map.removeLayer(youMarker);
+    youMarker = null;
+  }
 
   for (const route of routes) {
     if (!route?.id) continue;
-    routeLayers.set(route.id, paintRoute(route, theme, { dual }));
+    routeLayers.set(route.id, paintRoute(route, theme, { dual: multi }));
   }
 
-  if (!dual && youLatLng) {
+  if (youLatLng) {
     youMarker = L.marker([youLatLng.lat, youLatLng.lng], {
       icon: youIcon(),
       title: "You",
@@ -549,17 +670,18 @@ function paintFocusRoutes(routes, { youLatLng = null, refit = true } = {}) {
   }
 
   if (refit) {
-    scheduleFitToMarkers({ includeYou: !dual });
+    scheduleFitToMarkers({ includeYou: true });
   }
 }
 
+/** Enter route-focus mode on the always-on map (stops idle GPS follow). */
 export async function showFocusPanel({
   routes = [],
   youLatLng = null,
   refit = true,
 } = {}) {
-  const panel = panelEl();
-  panel.hidden = false;
+  idleFollow = false;
+  focusActive = true;
   document.body.classList.add("focus-active");
 
   await ensureMap();
@@ -569,41 +691,20 @@ export async function showFocusPanel({
   paintFocusRoutes(routes, { youLatLng, refit });
 }
 
-/** Upgrade an open focus map without remounting Leaflet. */
+/** Upgrade focus overlays without remounting Leaflet. */
 export function updateFocusOverlays({
   routes = [],
   youLatLng = null,
   refit = true,
 } = {}) {
-  if (!map || panelEl().hidden) return;
-  const dual = routes.length >= 2;
-  paintFocusRoutes(routes, {
-    youLatLng: dual ? null : youLatLng,
-    refit,
-  });
+  if (!map || !focusActive) return;
+  paintFocusRoutes(routes, { youLatLng, refit });
 }
 
 export function updateYouMarker(youLatLng, { refit = false } = {}) {
-  if (!map || !youLatLng || panelEl().hidden) return;
-  // Dual-select: never show the you pin
-  if (routeLayers.size >= 2) {
-    if (youMarker) {
-      map.removeLayer(youMarker);
-      youMarker = null;
-    }
-    return;
-  }
-  const L = window.L;
+  if (!map || !youLatLng || !focusActive) return;
   const isNew = !youMarker;
-  if (youMarker) {
-    youMarker.setLatLng([youLatLng.lat, youLatLng.lng]);
-  } else {
-    youMarker = L.marker([youLatLng.lat, youLatLng.lng], {
-      icon: youIcon(),
-      title: "You",
-      zIndexOffset: 300,
-    }).addTo(map);
-  }
+  ensureYouMarker(youLatLng);
   if (refit || isNew) {
     scheduleFitToMarkers({ includeYou: true });
   }
@@ -617,17 +718,30 @@ export function updateBusMarker(
   setBusMarkerPosition(routeId, busLatLng, { smooth, dissolve, appear });
 }
 
-export function hideFocusPanel() {
-  const panel = panelEl();
-  panel.hidden = true;
+/** Leave route focus; resume idle GPS follow (map stays visible). */
+export function hideFocusPanel({ youLatLng = null } = {}) {
+  focusActive = false;
+  idleFollow = true;
   document.body.classList.remove("focus-active");
   if (fitFrame) {
     cancelAnimationFrame(fitFrame);
     fitFrame = 0;
   }
-  clearOverlays();
+  clearRouteOverlays();
+  if (youLatLng) {
+    ensureYouMarker(youLatLng);
+    centerInActiveArea(youLatLng, IDLE_ZOOM, { animate: true });
+  } else if (youMarker) {
+    map?.removeLayer(youMarker);
+    youMarker = null;
+  }
 }
 
+/** True while one or more routes are focused (not merely that the map exists). */
 export function isFocusPanelVisible() {
-  return !panelEl().hidden;
+  return focusActive;
+}
+
+export function isMapReady() {
+  return Boolean(map);
 }

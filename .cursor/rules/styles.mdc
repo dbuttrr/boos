@@ -14,7 +14,7 @@ Use `block__element--modifier`:
 
 ```html
 <span class="row__eta row__eta--none"></span>
-<div class="focus-panel__map"></div>
+<div class="map-stage__map" id="focus-map"></div>
 <div class="add-sheet__map"></div>
 ```
 
@@ -31,17 +31,21 @@ Use `block__element--modifier`:
 - Touch-friendly targets; `aria-live="polite"` on dynamic sections (`#cards`)
 - `role="button"` + keyboard (`Enter`/`Space`) for interactive rows
 - `aria-label` / `aria-pressed` on theme toggle
-- `aria-label` on floating `nav-dock`
+- `aria-label` on floating `nav-dock` (above watch-sheet) and on `theme-toggle` (fixed right)
 
 ## New UI
 
 Add styles to `style.css` following existing glass/row/focus patterns. Keep light and dark variants in sync.
 
-Notable blocks: `row`, `focus-panel`, `add-sheet` (watchlist editor overlay + map; solid scrim, no backdrop blur; `add-sheet__suggestions` typeahead), `nav-dock` (bottom floating bar: add + theme), `theme-toggle`.
+Notable blocks: `map-stage` (full-bleed Leaflet background), `watch-sheet` (bottom-half liquid-glass watchlist panel), `row`, `add-sheet` (watchlist editor overlay + map; solid scrim, no backdrop blur; `add-sheet__suggestions` typeahead; map always visible; `add-sheet__map--dimmed` until direction selected), `nav-dock` (transparent positioning wrapper; circular **+** only, no outer pill), `nav-dock__add--clear` (+ rotates to × with scale pulse and slight red tint while routes are focused), `theme-toggle` (fixed right, same height as dock). Focus selection highlights only `.row--focused`, not the watch-sheet chrome. `#cards` scrolls without a visible scrollbar (`scrollbar-width: none` / `::-webkit-scrollbar { display: none }`).
+
+Bus marker colors: `.focus-marker--bus-a` … `--bus-f` (tokens `--focus-bus` / `-b` … `-f` and `-top` variants).
 
 `row__remove` is layout-collapsed (`width: 0`) until `row--editing` (long-press); spacing comes from its editing margin, not `.row` gap (gap stays 0 so left/right padding match when collapsed).
 
 Focus bus marker handoff: `focus-marker--dissolving` + `focus-marker__sand` / `__sand-chip` (Thanos-style sand blow up-and-right); `focus-marker--appearing` on the next bus. No canvas/WebGL.
+
+Map chrome: zoom control is `topright` (above the watch-sheet); attribution sits above the sheet via bottom margin.
 
 ## When shipping UI changes
 
