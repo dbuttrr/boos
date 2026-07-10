@@ -31,7 +31,7 @@ html {
   --focus-glass-border: rgba(255, 255, 255, 0.65);
   --focus-glass-highlight: rgba(255, 255, 255, 0.75);
   --focus-shadow: 0 10px 28px rgba(15, 20, 25, 0.1);
-  --watch-sheet-glass: rgba(255, 255, 255, 0.34);
+  --watch-sheet-glass: rgba(255, 255, 255, 0.2);
   --row-glass: rgba(255, 255, 255, 0.48);
   --row-glass-border: rgba(255, 255, 255, 0.7);
   --row-glass-shadow: 0 4px 16px rgba(15, 20, 25, 0.06),
@@ -78,7 +78,7 @@ html {
   --focus-glass-border: rgba(255, 255, 255, 0.2);
   --focus-glass-highlight: rgba(255, 255, 255, 0.18);
   --focus-shadow: 0 14px 36px rgba(0, 0, 0, 0.4);
-  --watch-sheet-glass: rgba(12, 16, 22, 0.42);
+  --watch-sheet-glass: rgba(12, 16, 22, 0.28);
   --row-glass: rgba(255, 255, 255, 0.09);
   --row-glass-border: rgba(255, 255, 255, 0.18);
   --row-glass-shadow: 0 8px 24px rgba(0, 0, 0, 0.35),
@@ -1203,22 +1203,17 @@ body.focus-active .header__subtitle {
   border: 1px solid var(--focus-glass-border);
   border-radius: 1rem;
   overflow: hidden;
-  background: var(--focus-glass);
-  background-image: linear-gradient(
-    135deg,
-    var(--focus-glass-highlight) 0%,
-    transparent 48%
-  );
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
+  background: var(--watch-sheet-glass, var(--focus-glass));
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.1);
   backdrop-filter: blur(16px) saturate(1.5);
   -webkit-backdrop-filter: blur(16px) saturate(1.5);
   transition: opacity 0.2s ease;
 }
 
 .theme-toggle__btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  box-sizing: border-box;
+  display: grid;
+  place-items: center;
   width: 2rem;
   height: 2rem;
   margin: 0;
@@ -1226,23 +1221,21 @@ body.focus-active .header__subtitle {
   border: none;
   border-radius: 0;
   background: transparent;
-  color: var(--text-muted);
+  color: var(--text);
   cursor: pointer;
+  line-height: 0;
+  -webkit-appearance: none;
+  appearance: none;
   -webkit-tap-highlight-color: transparent;
-  transition: color 0.2s ease, background 0.2s ease;
+  transition: color 0.2s ease, opacity 0.2s ease;
 }
 
 .theme-toggle__btn + .theme-toggle__btn {
   border-top: 1px solid var(--focus-glass-border);
 }
 
-.theme-toggle__btn--active {
-  color: var(--text);
-  background: color-mix(in srgb, var(--focus-accent) 16%, transparent);
-}
-
 .theme-toggle__btn:active {
-  transform: scale(0.94);
+  opacity: 0.65;
 }
 
 .theme-toggle__btn:focus-visible {
@@ -1255,4 +1248,7 @@ body.focus-active .header__subtitle {
   width: 1.05rem;
   height: 1.05rem;
   display: block;
+  margin: 0;
+  flex-shrink: 0;
+  overflow: visible;
 }

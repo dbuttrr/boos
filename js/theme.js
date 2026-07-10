@@ -152,7 +152,6 @@ function syncToggle(theme) {
   for (const btn of root.querySelectorAll("[data-theme-choice]")) {
     const choice = btn.getAttribute("data-theme-choice");
     const active = choice === theme;
-    btn.classList.toggle("theme-toggle__btn--active", active);
     btn.setAttribute("aria-pressed", active ? "true" : "false");
   }
   root.dataset.themeActive = theme;

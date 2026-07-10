@@ -30,7 +30,7 @@ Use `block__element--modifier`:
 - `viewport-fit=cover` for notched devices
 - Touch-friendly targets; `aria-live="polite"` on dynamic sections (`#cards`)
 - `role="button"` + keyboard (`Enter`/`Space`) for interactive rows
-- `aria-label` / `aria-pressed` on each theme-toggle sun/moon button
+- `aria-label` / `aria-pressed` on each theme-toggle sun/moon button (no visual selected chrome)
 - `aria-label` on floating `nav-dock` (above watch-sheet) and on `theme-toggle` group (map top-right)
 
 ## New UI
