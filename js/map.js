@@ -167,9 +167,27 @@ function escapeHtml(text) {
     .replace(/"/g, "&quot;");
 }
 
+/**
+ * Split "Name, District" style stop titles onto two lines (text after the
+ * first comma becomes the secondary line). No comma → single line.
+ */
+function formatStopLabelHtml(name) {
+  const comma = name.indexOf(",");
+  if (comma < 0) {
+    return `<span class="focus-marker__stop-label-text">${escapeHtml(name)}</span>`;
+  }
+  const primary = name.slice(0, comma).trim();
+  const secondary = name.slice(comma + 1).trim();
+  if (!primary || !secondary) {
+    return `<span class="focus-marker__stop-label-text">${escapeHtml(name)}</span>`;
+  }
+  return `<span class="focus-marker__stop-label-text">${escapeHtml(primary)}</span><span class="focus-marker__stop-label-sub">${escapeHtml(secondary)}</span>`;
+}
+
 /** Wide icon box so a glass name label can sit above the pin tip. */
 const STOP_LABEL_ICON_W = 168;
 const STOP_LABEL_ICON_H = 58;
+const STOP_LABEL_ICON_H_TWO_LINE = 72;
 
 /**
  * Boarding / picker stop pin.
@@ -183,20 +201,30 @@ export function stopIcon({
   const L = window.L;
   const name = typeof label === "string" ? label.trim() : "";
   const hasLabel = Boolean(name);
+  const twoLine =
+    hasLabel &&
+    name.includes(",") &&
+    name.slice(0, name.indexOf(",")).trim() &&
+    name.slice(name.indexOf(",") + 1).trim();
   const selectedMod = selected || hasLabel ? " focus-marker--stop-selected" : "";
   const labeledMod = hasLabel ? " focus-marker--stop-labeled" : "";
+  const twoLineMod = twoLine ? " focus-marker--stop-labeled-2" : "";
   const palette = ROUTE_COLORS[colorIndex] ?? ROUTE_COLORS[0];
   const accent = getAppTheme() === "dark" ? palette.dark : palette.light;
 
   const labelHtml = hasLabel
-    ? `<span class="focus-marker__stop-label" style="--stop-label-accent:${accent}"><span class="focus-marker__stop-label-text">${escapeHtml(name)}</span><span class="focus-marker__stop-label-caret" aria-hidden="true"></span></span>`
+    ? `<span class="focus-marker__stop-label" style="--stop-label-accent:${accent}">${formatStopLabelHtml(name)}<span class="focus-marker__stop-label-caret" aria-hidden="true"></span></span>`
     : "";
 
   const width = hasLabel ? STOP_LABEL_ICON_W : 22;
-  const height = hasLabel ? STOP_LABEL_ICON_H : 30;
+  const height = hasLabel
+    ? twoLine
+      ? STOP_LABEL_ICON_H_TWO_LINE
+      : STOP_LABEL_ICON_H
+    : 30;
 
   return L.divIcon({
-    className: `focus-marker focus-marker--stop${selectedMod}${labeledMod}`,
+    className: `focus-marker focus-marker--stop${selectedMod}${labeledMod}${twoLineMod}`,
     html: `<span class="focus-marker__stop-wrap"${hasLabel ? ` style="--stop-label-accent:${accent}"` : ""}>${labelHtml}<span class="focus-marker__stop" aria-hidden="true"><span class="focus-marker__stop-head"></span><span class="focus-marker__stop-stem"></span></span></span>`,
     iconSize: [width, height],
     iconAnchor: [width / 2, height - 2],
@@ -278,8 +306,8 @@ function activeAreaPadding() {
   const size = map.getSize();
   const bottomInset = Math.round(size.y * 0.5);
   return {
-    // Extra top room for boarding-stop name labels above pins.
-    paddingTopLeft: [40, 72],
+    // Extra top room for boarding-stop name labels above pins (incl. two-line).
+    paddingTopLeft: [40, 84],
     paddingBottomRight: [40, bottomInset + 16],
   };
 }
