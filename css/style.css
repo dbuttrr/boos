@@ -133,13 +133,13 @@ body {
 }
 
 /* Liquid-glass watchlist over the bottom half of the map.
-   Equal inset on left/right/bottom (0.75rem); safe-area lifts the
-   sheet above the home indicator on notched devices. */
+   Equal inset on left/right/bottom (0.75rem); ignores home-indicator
+   safe-area so the bottom gutter matches the sides. */
 .watch-sheet {
   position: fixed;
   left: 0.75rem;
   right: 0.75rem;
-  bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px));
+  bottom: 0.75rem;
   z-index: 20;
   display: flex;
   flex-direction: column;
@@ -1093,9 +1093,7 @@ body.add-sheet-open .theme-toggle {
 .nav-dock {
   position: fixed;
   left: 50%;
-  bottom: calc(
-    env(safe-area-inset-bottom, 0px) + 0.75rem + 48dvh + 0.5rem
-  );
+  bottom: calc(0.75rem + 48dvh + 0.5rem);
   z-index: 25;
   display: flex;
   align-items: center;
