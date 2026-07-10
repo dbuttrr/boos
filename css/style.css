@@ -554,10 +554,34 @@ body {
   gap: 0.75rem;
 }
 
-/* Inline add-route flow (inside watch-sheet) */
+/* Add-route flow + floating + (above watch-sheet, outside the sheet) */
+.add-anchor {
+  position: fixed;
+  left: 50%;
+  bottom: calc(0.75rem + 48dvh + 0.5rem);
+  z-index: 25;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  width: min(22rem, calc(100% - 1.5rem));
+  transform: translateX(-50%);
+}
+
 .add-flow {
-  flex-shrink: 0;
-  padding: 0 0.75rem 0.5rem;
+  width: 100%;
+  padding: 0.75rem;
+  border-radius: 1.375rem;
+  border: 1px solid var(--focus-glass-border);
+  background: var(--focus-glass);
+  background-image: linear-gradient(
+    135deg,
+    var(--focus-glass-highlight) 0%,
+    transparent 48%
+  );
+  box-shadow: var(--focus-shadow);
+  backdrop-filter: blur(20px) saturate(1.6);
+  -webkit-backdrop-filter: blur(20px) saturate(1.6);
 }
 
 .add-flow[hidden] {
@@ -574,7 +598,7 @@ body {
   flex-shrink: 0;
   width: 2rem;
   height: 2rem;
-  margin-top: 1.375rem;
+  margin-top: 1.125rem;
   padding: 0;
   border: 1px solid var(--border);
   border-radius: 50%;
@@ -779,7 +803,7 @@ body {
 .add-toast {
   position: fixed;
   left: 50%;
-  bottom: calc(0.75rem + 48dvh + 0.75rem);
+  bottom: calc(0.75rem + 48dvh + 3rem);
   z-index: 30;
   transform: translateX(-50%) translateY(0.5rem);
   max-width: calc(100% - 2rem);
@@ -1090,12 +1114,8 @@ body.add-flow-active .nav-dock__add--clear {
   }
 }
 
-/* Floating + / clear control above the watch-sheet (no outer pill) */
+/* Floating + / clear control (inside add-anchor above watch-sheet) */
 .nav-dock {
-  position: fixed;
-  left: 50%;
-  bottom: calc(0.75rem + 48dvh + 0.5rem);
-  z-index: 25;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1104,8 +1124,6 @@ body.add-flow-active .nav-dock__add--clear {
   border: none;
   background: transparent;
   box-shadow: none;
-  transform: translateX(-50%);
-  transition: opacity 0.2s ease;
 }
 
 .nav-dock__add {

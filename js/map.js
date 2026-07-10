@@ -1040,7 +1040,7 @@ export function updateAddPickPath(path) {
 }
 
 export function setAddPickSelection(stopId) {
-  addPickSelectedId = stopId;
+  addPickSelectedId = stopId || null;
   updateAddPickMarkerIcons();
 }
 
