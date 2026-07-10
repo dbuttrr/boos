@@ -33,7 +33,7 @@ Personal use: mobile, Hong Kong, checking ETAs before leaving home or office.
 - Each row shows route label, primary ETA, and secondary ETA when available.
 - Remarks (e.g. "No scheduled service") shown when API returns no upcoming ETA.
 - Errors shown inline per row.
-- Auto-refresh every 5 seconds (`REFRESH_INTERVAL_MS`).
+- Auto-refresh every 5 seconds (`REFRESH_INTERVAL_MS`); watch-sheet status shows last-updated plus a countdown to the next poll.
 - Tap outside rows (empty watch-sheet padding) to refresh manually.
 - Refreshes when tab becomes visible again.
 
