@@ -361,12 +361,6 @@ async function ensureMap() {
 
   map.attributionControl.setPrefix(false);
 
-  L.control
-    .zoom({
-      position: "topright",
-    })
-    .addTo(map);
-
   applyTileTheme(getAppTheme());
   watchTheme();
   map.setView([DEFAULT_CENTER.lat, DEFAULT_CENTER.lng], IDLE_ZOOM, {

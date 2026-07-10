@@ -221,7 +221,8 @@ body {
   box-shadow: none;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
-  overflow: hidden;
+  /* Visible at rest so the focused ring/glow isn't clipped; hidden while swiping. */
+  overflow: visible;
   touch-action: pan-y;
 }
 
@@ -316,6 +317,7 @@ body {
 
 .row--swiping,
 .row--swipe-open {
+  overflow: hidden;
   touch-action: none;
 }
 
@@ -349,31 +351,7 @@ body {
     var(--row-focus-glow, var(--row-focused-glow));
 }
 
-/* Leaflet chrome on full-bleed map (top-right stays in active area) */
-.map-stage .leaflet-control-zoom {
-  border: 1px solid var(--focus-glass-border) !important;
-  border-radius: 0.75rem !important;
-  overflow: hidden;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
-  margin-top: calc(env(safe-area-inset-top, 0px) + 2.75rem) !important;
-  margin-right: 0.625rem !important;
-}
-
-.map-stage .leaflet-control-zoom a {
-  width: 2rem !important;
-  height: 2rem !important;
-  line-height: 2rem !important;
-  background: var(--focus-glass) !important;
-  color: var(--text) !important;
-  border-bottom-color: var(--focus-glass-border) !important;
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-}
-
-.map-stage .leaflet-control-zoom a:hover {
-  background: var(--bg) !important;
-}
-
+/* Leaflet attribution on full-bleed map (above the watch-sheet) */
 .map-stage .leaflet-control-attribution {
   margin: 0 0 calc(48dvh + 0.75rem) 0 !important;
   padding: 0.15rem 0.4rem !important;
