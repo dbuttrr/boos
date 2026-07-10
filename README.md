@@ -45,7 +45,7 @@ Changes to `js/config.js` take effect after you push and GitHub Pages redeploys 
 
 ### In the app
 
-Tap **+** above the watchlist to add a route: enter the route number, pick direction, then tap your boarding stop on the map. Long-press a row to remove it. Changes are saved in your browser's localStorage.
+Tap **+** above the watchlist to add a route: enter the route number, pick direction, then tap your boarding stop on the map. Swipe a row left and tap Delete to remove it. Changes are saved in your browser's localStorage.
 
 ### Via config (optional seed)
 

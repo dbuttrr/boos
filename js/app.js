@@ -74,7 +74,9 @@ const addSelectionLabelEl = document.getElementById("add-selection-label");
 const addConfirmBtnEl = document.getElementById("add-confirm-btn");
 const addMapEl = document.getElementById("add-map");
 const SORT_DEBOUNCE_MS = 2_000;
-const LONG_PRESS_MS = 500;
+const SWIPE_ACTION_WIDTH = 76;
+const SWIPE_AXIS_THRESHOLD = 12;
+const SWIPE_OPEN_RATIO = 0.4;
 
 let watchlist = loadWatchlist();
 let watchlistIndex = buildWatchlistIndex(watchlist);
@@ -102,8 +104,9 @@ let addState = {
   selectedStop: null,
   loadToken: 0,
 };
-let longPressTimer = null;
-let longPressRowId = null;
+let swipeState = null;
+let openSwipeRow = null;
+let suppressRowClick = false;
 
 function buildWatchlistIndex(entries) {
   return new Map(entries.map((entry, i) => [entry.id, i]));
@@ -120,12 +123,16 @@ function createRowElement(entry) {
   row.setAttribute("role", "button");
   row.tabIndex = 0;
   row.innerHTML = `
-    <button type="button" class="row__remove" aria-label="Remove route">×</button>
-    <div class="row__main">
-      <div class="row__route"></div>
-      <div class="row__times">
-        <span class="row__eta"></span>
-        <span class="row__next"></span>
+    <div class="row__actions">
+      <button type="button" class="row__delete">Delete</button>
+    </div>
+    <div class="row__slide">
+      <div class="row__main">
+        <div class="row__route"></div>
+        <div class="row__times">
+          <span class="row__eta"></span>
+          <span class="row__next"></span>
+        </div>
       </div>
     </div>
   `;
@@ -338,7 +345,7 @@ function setFocusedRows(ids) {
       `0 8px ${dark ? 28 : 24}px ${hexToRgba(hex, alpha.glow)}`
     );
   });
-  syncDockClearButton(ids.length > 0);
+  syncDockClearButton(ids.length > 1);
 }
 
 function syncDockClearButton(clearMode) {
@@ -1343,6 +1350,7 @@ async function showAddMapPreview() {
 }
 
 async function openAddSheet() {
+  closeAllSwipeRows();
   if (isFocusPanelVisible()) {
     exitFocus();
   }
@@ -1545,24 +1553,34 @@ function confirmRemoveEntry(id) {
   }
 }
 
-function enterRowEditMode() {
-  cardsEl.querySelectorAll(".row").forEach((row) => {
-    row.classList.add("row--editing");
-  });
+function setRowSwipeX(row, x) {
+  if (!row) return;
+  const clamped = Math.max(-SWIPE_ACTION_WIDTH, Math.min(0, x));
+  row.style.setProperty("--row-swipe-x", `${clamped}px`);
+  return clamped;
 }
 
-function exitRowEditMode() {
-  cardsEl.querySelectorAll(".row--editing").forEach((row) => {
-    row.classList.remove("row--editing");
-  });
+function closeSwipeRow(row) {
+  if (!row) return;
+  row.classList.remove("row--swiping", "row--swipe-open");
+  row.style.setProperty("--row-swipe-x", "0px");
+  if (openSwipeRow === row) openSwipeRow = null;
 }
 
-function clearLongPress() {
-  if (longPressTimer) {
-    clearTimeout(longPressTimer);
-    longPressTimer = null;
-  }
-  longPressRowId = null;
+function openRowSwipe(row) {
+  if (!row) return;
+  if (openSwipeRow && openSwipeRow !== row) closeSwipeRow(openSwipeRow);
+  row.classList.remove("row--swiping");
+  row.classList.add("row--swipe-open");
+  row.style.setProperty("--row-swipe-x", `${-SWIPE_ACTION_WIDTH}px`);
+  openSwipeRow = row;
+}
+
+function closeAllSwipeRows() {
+  cardsEl
+    .querySelectorAll(".row--swipe-open, .row--swiping")
+    .forEach((row) => closeSwipeRow(row));
+  openSwipeRow = null;
 }
 
 ensureRows();
@@ -1605,7 +1623,7 @@ document.addEventListener("themechange", () => {
 
 document.getElementById("add-route-btn")?.addEventListener("click", (event) => {
   event.stopPropagation();
-  if (focusedIds.length > 0) {
+  if (focusedIds.length > 1) {
     exitFocus();
     return;
   }
@@ -1672,22 +1690,34 @@ addSheetEl?.addEventListener("click", (event) => {
 });
 
 cardsEl.addEventListener("click", (event) => {
-  const removeBtn = event.target.closest(".row__remove");
-  if (removeBtn) {
+  const deleteBtn = event.target.closest(".row__delete");
+  if (deleteBtn) {
     event.stopPropagation();
-    const row = removeBtn.closest(".row");
+    const row = deleteBtn.closest(".row");
     if (row) confirmRemoveEntry(row.dataset.id);
-    exitRowEditMode();
+    closeAllSwipeRows();
     return;
   }
 
   const row = event.target.closest(".row");
   if (!row) return;
-  if (row.classList.contains("row--editing")) {
-    event.stopPropagation();
+  event.stopPropagation();
+
+  if (suppressRowClick) {
+    suppressRowClick = false;
     return;
   }
-  event.stopPropagation();
+
+  // Tap an open swipe to close instead of toggling focus.
+  if (row.classList.contains("row--swipe-open")) {
+    closeSwipeRow(row);
+    return;
+  }
+
+  if (openSwipeRow && openSwipeRow !== row) {
+    closeSwipeRow(openSwipeRow);
+  }
+
   toggleFocus(row.dataset.id);
 });
 
@@ -1696,26 +1726,110 @@ cardsEl.addEventListener("keydown", (event) => {
   const row = event.target.closest(".row");
   if (!row) return;
   event.preventDefault();
+  closeAllSwipeRows();
   toggleFocus(row.dataset.id);
 });
 
 cardsEl.addEventListener("pointerdown", (event) => {
+  if (event.pointerType === "mouse" && event.button !== 0) return;
+  if (isAddSheetOpen()) return;
+
+  const deleteBtn = event.target.closest(".row__delete");
+  if (deleteBtn) return;
+
   const row = event.target.closest(".row");
-  if (!row || event.target.closest(".row__remove")) return;
+  if (!row) return;
 
-  clearLongPress();
-  longPressRowId = row.dataset.id;
-  longPressTimer = setTimeout(() => {
-    longPressTimer = null;
-    enterRowEditMode();
-  }, LONG_PRESS_MS);
+  const startX = event.clientX;
+  const startY = event.clientY;
+  const opened = row.classList.contains("row--swipe-open");
+  const startTx = opened ? -SWIPE_ACTION_WIDTH : 0;
+
+  if (openSwipeRow && openSwipeRow !== row) {
+    closeSwipeRow(openSwipeRow);
+  }
+
+  swipeState = {
+    row,
+    pointerId: event.pointerId,
+    startX,
+    startY,
+    startTx,
+    axis: null,
+    dragged: false,
+  };
 });
 
-cardsEl.addEventListener("pointerup", clearLongPress);
-cardsEl.addEventListener("pointercancel", clearLongPress);
-cardsEl.addEventListener("pointerleave", (event) => {
-  if (event.target.closest(".row")) clearLongPress();
+cardsEl.addEventListener("pointermove", (event) => {
+  const state = swipeState;
+  if (!state || event.pointerId !== state.pointerId) return;
+
+  const dx = event.clientX - state.startX;
+  const dy = event.clientY - state.startY;
+
+  if (!state.axis) {
+    if (
+      Math.abs(dx) < SWIPE_AXIS_THRESHOLD &&
+      Math.abs(dy) < SWIPE_AXIS_THRESHOLD
+    ) {
+      return;
+    }
+    if (Math.abs(dx) > Math.abs(dy)) {
+      state.axis = "x";
+      state.row.classList.add("row--swiping");
+      state.row.classList.remove("row--swipe-open");
+      try {
+        state.row.setPointerCapture(event.pointerId);
+      } catch {
+        // ignore
+      }
+    } else {
+      state.axis = "y";
+      swipeState = null;
+      return;
+    }
+  }
+
+  if (state.axis !== "x") return;
+
+  event.preventDefault();
+  state.dragged = true;
+  suppressRowClick = true;
+  state.lastX = setRowSwipeX(state.row, state.startTx + dx);
 });
+
+function endSwipe(event) {
+  const state = swipeState;
+  if (!state || (event && event.pointerId !== state.pointerId)) return;
+  swipeState = null;
+
+  const row = state.row;
+  row.classList.remove("row--swiping");
+
+  if (state.axis !== "x") {
+    if (!state.dragged) suppressRowClick = false;
+    return;
+  }
+
+  const currentX = state.lastX ?? state.startTx;
+  const shouldOpen = currentX <= -SWIPE_ACTION_WIDTH * SWIPE_OPEN_RATIO;
+
+  if (shouldOpen) {
+    openRowSwipe(row);
+  } else {
+    closeSwipeRow(row);
+  }
+
+  if (state.dragged) {
+    suppressRowClick = true;
+    setTimeout(() => {
+      suppressRowClick = false;
+    }, 0);
+  }
+}
+
+cardsEl.addEventListener("pointerup", endSwipe);
+cardsEl.addEventListener("pointercancel", endSwipe);
 
 document.getElementById("map-stage")?.addEventListener("click", (event) => {
   event.stopPropagation();
@@ -1726,9 +1840,9 @@ document.getElementById("theme-toggle")?.addEventListener("click", (event) => {
 });
 
 document.getElementById("app").addEventListener("click", (event) => {
-  if (event.target.closest(".row--editing")) return;
-
-  exitRowEditMode();
+  if (!event.target.closest(".row")) {
+    closeAllSwipeRows();
+  }
 
   if (
     event.target.closest(".row") ||

@@ -21,11 +21,11 @@ Personal use: mobile, Hong Kong, checking ETAs before leaving home or office.
 
 ### Watchlist editing
 
-- Circular **+** (floating above the watch-sheet, no outer dock pill) opens add sheet: enter route → pick direction → tap stop on map. The sheet map is visible immediately (dimmed, non-interactive preview centered on you); choosing a direction undims it and enables stop picking. While routes are focused, the same control becomes clear-all **×** (scale pulse + slight red tint).
+- Circular **+** (floating above the watch-sheet, no outer dock pill) opens add sheet: enter route → pick direction → tap stop on map. The sheet map is visible immediately (dimmed, non-interactive preview centered on you); choosing a direction undims it and enables stop picking. While **two or more** routes are focused, the same control becomes clear-all **×** (scale pulse + slight red tint); with zero or one focused it stays **+**.
 - Sheet paints immediately; route catalog stays in memory (idle-prefetched). Typing shows up to 8 prefix-matched suggestions — no full-route datalist in the DOM.
 - Map shows OSRM road-snapped route polyline (same as focus map), all stops on that direction, and your location when available; paints stop-to-stop first then upgrades the path; viewport auto-fits the full path.
 - Added routes persist in browser localStorage; `js/config.js` seeds the list on first visit.
-- Long-press a row to show remove (×); confirm before delete.
+- Swipe a row left to reveal Delete (iOS-style); tap Delete and confirm to remove. Only one row can be open at a time; vertical list scroll is preserved via axis lock.
 
 ### ETA list
 
@@ -49,7 +49,7 @@ Personal use: mobile, Hong Kong, checking ETAs before leaving home or office.
 - Idle (no row selected): Maps/Uber-style GPS follow — the you marker always tracks GPS, but the map recenters into the **top-half** active area only when you leave a soft follow window (`IDLE_FOLLOW_WINDOW` in `config.js`). Falls back to `LOCATION` in `config.js` until a fix arrives. You marker is slightly larger (36px hit area) for glanceability.
 - Tap a row to focus (tap again to deselect): map auto-fits your location, the boarding stop(s), and the estimated bus(es) into the top-half active area (asymmetric `fitBounds` padding / pan offset so the glass sheet does not cover framed markers) — deferred until layout settles so Leaflet has a real size. Each focused boarding stop shows a simple glass name bubble above the pin; text after the first comma wraps to a second, quieter line; if several focused routes share the same stop, only one label is shown.
 - Any number of routes can be focused at once; row/map colors cycle through a 6-color `ROUTE_COLORS` palette (blue, yellow, green, coral, violet, teal).
-- While one or more routes are focused, the **+** morphs into a clear **×** (rotate + scale pulse, slight red background); tapping it deselects all focused routes and returns to idle GPS follow.
+- While **two or more** routes are focused, the **+** morphs into a clear **×** (rotate + scale pulse, slight red background); tapping it deselects all focused routes and returns to idle GPS follow. With a single focused route the control stays **+** (tap the row to deselect).
 - Focus always shows the "you" marker when geolocation is available; road-following route polylines; estimated bus positions with smooth animation between polls. Multi-select uses slightly lower line opacity so overlapping paths stay readable.
 - Deselecting the last focused row returns to idle GPS follow (map stays visible).
 - Bus position derived from upstream stop ETAs + OSRM road-snapped polylines.
