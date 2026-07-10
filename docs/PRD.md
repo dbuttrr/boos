@@ -72,7 +72,7 @@ Personal use: mobile, Hong Kong, checking ETAs before leaving home or office.
 ### Theme
 
 - Light/dark mode via a vertical sun/moon control in the map top-right (replaces the old zoom +/- slot); auto-schedules by Hong Kong sunrise/sunset when no manual preference saved. The centered **+** / clear **×** stays above the watch-sheet.
-- Dark mode uses softer glass drop shadows (`--focus-shadow`, `--row-glass-shadow`) so the watch-sheet and rows don’t read as heavy black halos over the map.
+- Dark mode keeps a quieter top-left glass highlight (`--focus-glass-highlight`, `--glass-sheen`) so the watch-sheet and rows don’t look overly shiny.
 - Map tiles and row focus colors follow theme.
 
 ### Data & caching
