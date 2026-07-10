@@ -213,7 +213,7 @@ export function stopIcon({
   const accent = getAppTheme() === "dark" ? palette.dark : palette.light;
 
   const labelHtml = hasLabel
-    ? `<span class="focus-marker__stop-label" style="--stop-label-accent:${accent}">${formatStopLabelHtml(name)}<span class="focus-marker__stop-label-caret" aria-hidden="true"></span></span>`
+    ? `<span class="focus-marker__stop-label">${formatStopLabelHtml(name)}</span>`
     : "";
 
   const width = hasLabel ? STOP_LABEL_ICON_W : 22;
@@ -225,7 +225,7 @@ export function stopIcon({
 
   return L.divIcon({
     className: `focus-marker focus-marker--stop${selectedMod}${labeledMod}${twoLineMod}`,
-    html: `<span class="focus-marker__stop-wrap"${hasLabel ? ` style="--stop-label-accent:${accent}"` : ""}>${labelHtml}<span class="focus-marker__stop" aria-hidden="true"><span class="focus-marker__stop-head"></span><span class="focus-marker__stop-stem"></span></span></span>`,
+    html: `<span class="focus-marker__stop-wrap"${hasLabel || selected ? ` style="--stop-label-accent:${accent}"` : ""}>${labelHtml}<span class="focus-marker__stop" aria-hidden="true"><span class="focus-marker__stop-head"></span><span class="focus-marker__stop-stem"></span></span></span>`,
     iconSize: [width, height],
     iconAnchor: [width / 2, height - 2],
   });

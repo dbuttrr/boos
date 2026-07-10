@@ -388,6 +388,43 @@ function startBusReposition(estimate, toCum) {
   return true;
 }
 
+/**
+ * Mark the bus as arriving and ease along the polyline onto the boarding stop
+ * instead of teleporting. Returns true while a reposition animation is running.
+ */
+function beginArriveAtStop(estimate) {
+  if (!estimate) return false;
+  const stop = estimate.boardingStop;
+  const boardingCum =
+    estimate.boardingCumDist ??
+    stop?.cumDist ??
+    estimate.polyline?.[estimate.polyline.length - 1]?.cumDist;
+
+  estimate.reason = "arriving";
+  estimate.speedMPerMin = null;
+
+  if (!stop || boardingCum == null) return false;
+
+  // Already easing toward the boarding stop.
+  if (
+    estimate.repositionStartedAt != null &&
+    estimate.repositionToCum != null &&
+    Math.abs(estimate.repositionToCum - boardingCum) < BUS_REPOSITION_MIN_M
+  ) {
+    return true;
+  }
+
+  if (estimate.busCumDist != null && estimate.polyline?.length) {
+    if (startBusReposition(estimate, boardingCum)) return true;
+  }
+
+  clearBusReposition(estimate);
+  estimate.busCumDist = boardingCum;
+  estimate.busLatLng = { lat: stop.lat, lng: stop.lng };
+  bumpProgressHighWater(estimate);
+  return false;
+}
+
 function easeOutCubic(t) {
   return 1 - (1 - t) ** 3;
 }
@@ -462,13 +499,23 @@ function startBusAnimations(estimatesById, token = focusToken) {
   const tracks = [];
   for (const [id, estimate] of estimatesById) {
     if (!estimate?.polyline?.length || estimate.busCumDist == null) continue;
-    if (estimate.reason === "arriving" || estimate.reason === "seq-1") continue;
+    if (estimate.reason === "seq-1") continue;
 
     const polyline = estimate.polyline;
     const boardingCum =
       estimate.boardingCumDist ??
       estimate.boardingStop?.cumDist ??
       polyline[polyline.length - 1].cumDist;
+
+    // Keep animating arriving buses until they finish easing onto the stop.
+    if (estimate.reason === "arriving") {
+      const atStop =
+        estimate.repositionStartedAt == null &&
+        Math.abs(estimate.busCumDist - boardingCum) < BUS_REPOSITION_MIN_M;
+      if (atStop) continue;
+      tracks.push({ id, mode: "arrive", estimate, boardingCum });
+      continue;
+    }
 
     if (estimate.etaChain?.length >= 2) {
       tracks.push({ id, mode: "segment", estimate, boardingCum });
@@ -522,20 +569,39 @@ function startBusAnimations(estimatesById, token = focusToken) {
         continue;
       }
 
-      // Match full-estimate arriving snap — do not keep interpolating from a
-      // stale origin ETA once boarding is under ARRIVING_THRESHOLD_MIN.
+      // Ease into the stop when under the arriving threshold (or already arriving).
       if (
+        track.mode === "arrive" ||
         minsLeft <= ARRIVING_THRESHOLD_MIN ||
         estimate.reason === "arriving"
       ) {
-        clearBusReposition(estimate);
         const stop = estimate.boardingStop;
-        if (stop) {
-          estimate.reason = "arriving";
-          estimate.busCumDist = boardingCum;
-          estimate.busLatLng = { lat: stop.lat, lng: stop.lng };
-          bumpProgressHighWater(estimate);
-          updateBusMarker(track.id, { lat: stop.lat, lng: stop.lng });
+        const animating = beginArriveAtStop(estimate);
+        if (animating) {
+          const repositionPoint = tickBusReposition(estimate);
+          if (repositionPoint) {
+            estimate.busCumDist = repositionPoint.cumDist;
+            estimate.busLatLng = {
+              lat: repositionPoint.lat,
+              lng: repositionPoint.lng,
+            };
+            bumpProgressHighWater(estimate);
+            updateBusMarker(track.id, {
+              lat: repositionPoint.lat,
+              lng: repositionPoint.lng,
+            });
+            keepRunning = true;
+          } else if (stop) {
+            estimate.busCumDist = boardingCum;
+            estimate.busLatLng = { lat: stop.lat, lng: stop.lng };
+            bumpProgressHighWater(estimate);
+            updateBusMarker(track.id, { lat: stop.lat, lng: stop.lng });
+          }
+        } else if (stop && estimate.busLatLng) {
+          updateBusMarker(track.id, {
+            lat: estimate.busLatLng.lat,
+            lng: estimate.busLatLng.lng,
+          });
         }
         continue;
       }
@@ -640,19 +706,14 @@ function applyLightweightFocusEtaUpdate(results) {
     }
 
     if (minsLeft <= ARRIVING_THRESHOLD_MIN) {
-      clearBusReposition(estimate);
       const stop = estimate.boardingStop;
-      const boardingCum =
-        estimate.boardingCumDist ??
-        stop?.cumDist ??
-        estimate.polyline?.[estimate.polyline.length - 1]?.cumDist;
-      if (stop && boardingCum != null) {
-        estimate.reason = "arriving";
-        estimate.busCumDist = boardingCum;
-        estimate.busLatLng = { lat: stop.lat, lng: stop.lng };
-        estimate.speedMPerMin = null;
-        bumpProgressHighWater(estimate);
-        updateBusMarker(id, { lat: stop.lat, lng: stop.lng });
+      if (beginArriveAtStop(estimate)) {
+        startedReposition = true;
+      } else if (stop && estimate.busLatLng) {
+        updateBusMarker(id, {
+          lat: estimate.busLatLng.lat,
+          lng: estimate.busLatLng.lng,
+        });
       }
       continue;
     }
