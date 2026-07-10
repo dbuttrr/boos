@@ -230,22 +230,39 @@ body {
   inset: 0 0 0 auto;
   z-index: 0;
   display: flex;
+  align-items: stretch;
+  justify-content: center;
+  box-sizing: border-box;
   width: 4.75rem;
+  padding: 0.35rem;
 }
 
 .row__delete {
   flex: 1;
   margin: 0;
-  padding: 0 0.5rem;
+  padding: 0 0.4rem;
   border: none;
-  border-radius: 0;
+  /* Squircle-ish: continuous corner on all sides, inset by actions padding */
+  border-radius: 0.85rem;
   background: var(--error);
   color: #fff;
   font-size: 0.8125rem;
   font-weight: 600;
   letter-spacing: 0.01em;
   cursor: pointer;
+  opacity: var(--row-swipe-progress, 0);
+  pointer-events: none;
   -webkit-tap-highlight-color: transparent;
+  transition: opacity 0.22s ease;
+}
+
+.row--swiping .row__delete {
+  transition: none;
+}
+
+.row--swipe-open .row__delete {
+  pointer-events: auto;
+  opacity: 1;
 }
 
 .row__delete:active {
@@ -277,6 +294,7 @@ body {
     background 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease,
     opacity 0.2s ease;
   will-change: transform;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .row__slide::before {
@@ -306,16 +324,16 @@ body {
   transition: none;
 }
 
-.row--loading {
+.row--loading .row__slide {
   opacity: 0.5;
 }
 
 /* Beyond a definite 20-min walk — still selectable, just quieter. */
-.row--far {
+.row--far .row__slide {
   opacity: 0.42;
 }
 
-.row--far.row--focused {
+.row--far.row--focused .row__slide {
   opacity: 0.78;
 }
 

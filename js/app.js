@@ -1556,7 +1556,9 @@ function confirmRemoveEntry(id) {
 function setRowSwipeX(row, x) {
   if (!row) return;
   const clamped = Math.max(-SWIPE_ACTION_WIDTH, Math.min(0, x));
+  const progress = Math.min(1, Math.abs(clamped) / SWIPE_ACTION_WIDTH);
   row.style.setProperty("--row-swipe-x", `${clamped}px`);
+  row.style.setProperty("--row-swipe-progress", String(progress));
   return clamped;
 }
 
@@ -1564,6 +1566,7 @@ function closeSwipeRow(row) {
   if (!row) return;
   row.classList.remove("row--swiping", "row--swipe-open");
   row.style.setProperty("--row-swipe-x", "0px");
+  row.style.setProperty("--row-swipe-progress", "0");
   if (openSwipeRow === row) openSwipeRow = null;
 }
 
@@ -1573,6 +1576,7 @@ function openRowSwipe(row) {
   row.classList.remove("row--swiping");
   row.classList.add("row--swipe-open");
   row.style.setProperty("--row-swipe-x", `${-SWIPE_ACTION_WIDTH}px`);
+  row.style.setProperty("--row-swipe-progress", "1");
   openSwipeRow = row;
 }
 
