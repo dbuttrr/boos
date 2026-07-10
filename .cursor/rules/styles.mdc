@@ -24,7 +24,7 @@ Use `block__element--modifier`:
 - Toggle theme via `data-theme` on `<html>`
 - Do not hardcode colors in CSS when a `--token` exists
 - Map route colors are the exception (`ROUTE_COLORS` in `map.js`)
-- Dark glass top-left highlight stays quiet (`--focus-glass-highlight` / `--glass-sheen`); avoid a bright white sheen on the sheet and rows
+- Dark glass top-left highlight stays quiet (`--focus-glass-highlight` / `--glass-sheen` ~0.02–0.03); avoid a bright white sheen on the sheet and rows
 
 ## Mobile & a11y
 
