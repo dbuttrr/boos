@@ -4,13 +4,43 @@ const BASE_URL = "https://rt.data.gov.hk/v2/transport/citybus";
 
 const stopCache = new Map();
 const routeStopCache = new Map();
+const routeListCache = new Map();
+const routeMetaCache = new Map();
 const etaCache = new Map();
 const stopInflight = new Map();
 const routeStopInflight = new Map();
+const routeListInflight = new Map();
+const routeMetaInflight = new Map();
 
 const ETA_CACHE_TTL_MS = 15_000;
 const STOP_TTL_MS = 24 * 60 * 60 * 1000;
 const ROUTE_STOP_TTL_MS = 24 * 60 * 60 * 1000;
+const ROUTE_LIST_TTL_MS = 24 * 60 * 60 * 1000;
+const ROUTE_META_TTL_MS = 24 * 60 * 60 * 1000;
+
+function parseIsoMs(iso) {
+  if (!iso) return null;
+  const ms = new Date(iso).getTime();
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function snapshotMsFromPayload(payload, first, second) {
+  const fromEntries = [first, second]
+    .map((e) => parseIsoMs(e?.data_timestamp))
+    .filter((ms) => ms != null);
+  if (fromEntries.length) {
+    return Math.min(...fromEntries);
+  }
+  return parseIsoMs(payload.generated_timestamp);
+}
+
+/** Advance API snapshot time using local clock since fetch. */
+export function trackingNowMs(etaBundle) {
+  if (etaBundle?.snapshotMs == null || etaBundle?.receivedAtMs == null) {
+    return Date.now();
+  }
+  return etaBundle.snapshotMs + (Date.now() - etaBundle.receivedAtMs);
+}
 
 function pickArrivals(entries, direction) {
   let filtered = entries;
@@ -71,12 +101,17 @@ async function fetchJson(url) {
   return response.json();
 }
 
-export async function fetchEta(route, stopId, direction, { useCache = false } = {}) {
+export async function fetchEta(
+  route,
+  stopId,
+  direction,
+  { useCache = false, cacheTtlMs = ETA_CACHE_TTL_MS } = {}
+) {
   const cacheKey = `${route}|${stopId}|${direction ?? ""}`;
 
   if (useCache) {
     const cached = etaCache.get(cacheKey);
-    if (cached && Date.now() - cached.at < ETA_CACHE_TTL_MS) {
+    if (cached && Date.now() - cached.at < cacheTtlMs) {
       return cached.value;
     }
   }
@@ -86,13 +121,16 @@ export async function fetchEta(route, stopId, direction, { useCache = false } = 
   const entries = payload.data ?? [];
   const { first, second } = pickArrivals(entries, direction);
 
+  const receivedAtMs = Date.now();
   const value = {
     first,
     second,
     generatedAt: payload.generated_timestamp ?? null,
+    snapshotMs: snapshotMsFromPayload(payload, first, second),
+    receivedAtMs,
   };
 
-  etaCache.set(cacheKey, { at: Date.now(), value });
+  etaCache.set(cacheKey, { at: receivedAtMs, value });
   return value;
 }
 
@@ -134,6 +172,92 @@ export async function fetchStop(stopId) {
   });
 
   stopInflight.set(stopId, promise);
+  return promise;
+}
+
+function normalizeRouteMeta(data) {
+  return {
+    route: data.route,
+    origEn: data.orig_en,
+    origTc: data.orig_tc,
+    destEn: data.dest_en,
+    destTc: data.dest_tc,
+  };
+}
+
+export async function fetchRoutes() {
+  const cacheKey = "all";
+  if (routeListCache.has(cacheKey)) {
+    return routeListCache.get(cacheKey);
+  }
+
+  const storageKey = "bus:routes:all";
+  const stored = readCache(storageKey, ROUTE_LIST_TTL_MS);
+  if (stored) {
+    routeListCache.set(cacheKey, stored);
+    return stored;
+  }
+
+  if (routeListInflight.has(cacheKey)) {
+    return routeListInflight.get(cacheKey);
+  }
+
+  const promise = (async () => {
+    const payload = await fetchJson(`${BASE_URL}/route/CTB`);
+    const routes = (payload.data ?? [])
+      .map((item) => ({
+        route: item.route,
+        origEn: item.orig_en,
+        destEn: item.dest_en,
+      }))
+      .sort((a, b) =>
+        a.route.localeCompare(b.route, undefined, { numeric: true })
+      );
+
+    routeListCache.set(cacheKey, routes);
+    writeCache(storageKey, routes);
+    return routes;
+  })().finally(() => {
+    routeListInflight.delete(cacheKey);
+  });
+
+  routeListInflight.set(cacheKey, promise);
+  return promise;
+}
+
+export async function fetchRouteMeta(route) {
+  const cacheKey = route.toUpperCase();
+  if (routeMetaCache.has(cacheKey)) {
+    return routeMetaCache.get(cacheKey);
+  }
+
+  const storageKey = `bus:route-meta:${cacheKey}`;
+  const stored = readCache(storageKey, ROUTE_META_TTL_MS);
+  if (stored) {
+    routeMetaCache.set(cacheKey, stored);
+    return stored;
+  }
+
+  if (routeMetaInflight.has(cacheKey)) {
+    return routeMetaInflight.get(cacheKey);
+  }
+
+  const promise = (async () => {
+    const payload = await fetchJson(`${BASE_URL}/route/CTB/${encodeURIComponent(route)}`);
+    const data = payload.data;
+    if (!data) {
+      throw new Error(`Route ${route} not found`);
+    }
+
+    const meta = normalizeRouteMeta(data);
+    routeMetaCache.set(cacheKey, meta);
+    writeCache(storageKey, meta);
+    return meta;
+  })().finally(() => {
+    routeMetaInflight.delete(cacheKey);
+  });
+
+  routeMetaInflight.set(cacheKey, promise);
   return promise;
 }
 

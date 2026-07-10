@@ -13,20 +13,82 @@
         <div id="focus-map" class="focus-panel__map" role="img" aria-label="Map preview"></div>
       </div>
       <header class="header">
-        <p class="header__subtitle" id="last-refresh">Loading…</p>
+        <div class="header__bar">
+          <p class="header__subtitle" id="last-refresh">Loading…</p>
+        </div>
       </header>
       <section class="cards" id="cards" aria-live="polite"></section>
-      <button
-        type="button"
-        id="theme-toggle"
-        class="theme-toggle"
-        aria-label="Switch to dark mode"
-        aria-pressed="false"
-      >
-        <span class="theme-toggle__track" aria-hidden="true">
-          <span class="theme-toggle__thumb"></span>
-        </span>
-      </button>
+      <div id="add-sheet" class="add-sheet" hidden aria-modal="true" role="dialog" aria-labelledby="add-sheet-title">
+        <div class="add-sheet__panel">
+          <header class="add-sheet__header">
+            <h2 id="add-sheet-title" class="add-sheet__title">Add route</h2>
+            <button type="button" id="add-sheet-close" class="add-sheet__close" aria-label="Close">×</button>
+          </header>
+          <div class="add-sheet__form">
+            <label class="add-sheet__field">
+              <span class="add-sheet__label">Route</span>
+              <input
+                type="text"
+                id="add-route-input"
+                class="add-sheet__input"
+                inputmode="text"
+                autocomplete="off"
+                placeholder="e.g. 788"
+                aria-autocomplete="list"
+                aria-controls="add-route-suggestions"
+              />
+              <ul
+                id="add-route-suggestions"
+                class="add-sheet__suggestions"
+                role="listbox"
+                hidden
+              ></ul>
+            </label>
+            <fieldset class="add-sheet__direction" id="add-direction-fieldset" disabled>
+              <legend class="add-sheet__label">Direction</legend>
+              <div class="add-sheet__direction-btns">
+                <button type="button" class="add-sheet__dir-btn" data-direction="O" id="add-dir-outbound">
+                  Outbound
+                </button>
+                <button type="button" class="add-sheet__dir-btn" data-direction="I" id="add-dir-inbound">
+                  Inbound
+                </button>
+              </div>
+            </fieldset>
+            <p class="add-sheet__error" id="add-sheet-error" hidden></p>
+            <p class="add-sheet__hint" id="add-sheet-hint">Tap a stop on the map</p>
+          </div>
+          <div id="add-map" class="add-sheet__map" role="img" aria-label="Route stops map"></div>
+          <footer class="add-sheet__footer">
+            <p class="add-sheet__selection" id="add-selection-label">Select a stop</p>
+            <div class="add-sheet__actions">
+              <button type="button" id="add-cancel-btn" class="add-sheet__btn add-sheet__btn--secondary">Cancel</button>
+              <button type="button" id="add-confirm-btn" class="add-sheet__btn add-sheet__btn--primary" disabled>Add</button>
+            </div>
+          </footer>
+        </div>
+      </div>
+      <nav class="nav-dock" aria-label="App controls">
+        <button
+          type="button"
+          id="add-route-btn"
+          class="nav-dock__add"
+          aria-label="Add route"
+        >
+          +
+        </button>
+        <button
+          type="button"
+          id="theme-toggle"
+          class="theme-toggle"
+          aria-label="Switch to dark mode"
+          aria-pressed="false"
+        >
+          <span class="theme-toggle__track" aria-hidden="true">
+            <span class="theme-toggle__thumb"></span>
+          </span>
+        </button>
+      </nav>
     </main>
     <script type="module" src="js/app.js"></script>
   </body>

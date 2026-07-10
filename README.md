@@ -2,6 +2,8 @@
 
 A minimal mobile-first web app showing real-time Citybus arrival times for routes you care about.
 
+**Product requirements:** [docs/PRD.md](docs/PRD.md)
+
 ## Quick start
 
 **Option A — local server (recommended)**
@@ -41,7 +43,13 @@ Changes to `js/config.js` take effect after you push and GitHub Pages redeploys 
 
 ## Customize routes
 
-Edit [`js/config.js`](js/config.js). Each entry is one stop + direction:
+### In the app
+
+Tap **+** in the bottom dock to add a route: enter the route number, pick direction, then tap your boarding stop on the map. Long-press a row to remove it. Changes are saved in your browser's localStorage.
+
+### Via config (optional seed)
+
+Edit [`js/config.js`](js/config.js) to set the default watchlist for first-time visitors (or after clearing site data). Each entry is one stop + direction:
 
 ```js
 {
@@ -53,9 +61,9 @@ Edit [`js/config.js`](js/config.js). Each entry is one stop + direction:
 }
 ```
 
-Reload the page after changes.
+Reload the page after config changes (only affects browsers without a saved watchlist).
 
-## Finding stop IDs
+## Finding stop IDs (manual / config editing)
 
 1. **List stops on a route** — replace `{route}` and `{direction}` (`inbound` or `outbound`):
 
@@ -81,10 +89,15 @@ Reload the page after changes.
 
 ## How it works
 
+See [docs/PRD.md](docs/PRD.md) for full product behavior. Summary:
+
 - Fetches ETAs from the [Citybus V2 API](http://citybus.com.hk/datagovhk/bus_eta_api_specifications.pdf) (`rt.data.gov.hk`)
-- Shows the next bus (`eta_seq === 1`) for the configured direction
-- Auto-refreshes every 30 seconds
-- Tap anywhere to refresh manually
+- Add/remove routes in-app (+ button); watchlist persists in localStorage
+- Shows the next 1–2 upcoming arrivals per watchlisted stop + direction
+- Auto-refreshes every 5 seconds; tap outside rows to refresh manually
+- Sorts by distance when geolocation is available; dims stops beyond ~20 min walk
+- Tap a row to open a map with estimated bus position; compare up to 2 routes
+- Light/dark theme (auto by HK sunrise/sunset, or manual toggle)
 
 ## CORS
 

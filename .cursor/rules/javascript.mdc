@@ -1,0 +1,53 @@
+---
+description: JavaScript conventions for the ES-module codebase
+globs: js/**
+alwaysApply: false
+---
+
+# JavaScript
+
+Vanilla ES modules — no bundler, no framework. Match existing files.
+
+## Module boundaries
+
+| Module | Responsibility |
+|--------|----------------|
+| `config.js` | Default watchlist seed + tunable constants |
+| `watchlist.js` | localStorage load/save/add/remove for watchlist |
+| `api.js` | data.gov.hk fetch, format, session cache |
+| `cache.js` | localStorage read/write with TTL |
+| `estimate.js` | Bus position math, polyline helpers |
+| `routing.js` | OSRM road snapping + cache |
+| `map.js` | Leaflet focus map, markers, overlays |
+| `picker.js` | Add-flow map for stop selection |
+| `geo.js` | Geolocation watch + listeners |
+| `theme.js` | Light/dark + HK solar schedule |
+| `app.js` | DOM orchestration only — no API URLs here |
+
+## Naming
+
+- `camelCase` functions and variables
+- `UPPER_SNAKE` for exported config constants
+- Watchlist entries: `id`, `route`, `stopId`, `direction`, `label`
+
+## Patterns
+
+- `async/await` for I/O; use `readCache`/`writeCache` for localStorage
+- In-memory `Map` for session caches (`api.js`, `routing.js`)
+- Tunables go in `config.js`, not scattered in feature modules
+- DOM: build elements in JS (`createRowElement`), `data-id` on rows, delegate on `#cards`
+- Focus/map async: cancel stale work with `focusToken` + `selectionKey()` pattern
+- Bus tracking: `api.trackingNowMs()` advances Citybus snapshot time; `estimate.buildEtaChain` sanitizes via exported `sanitizeEtaChain` (monotonic time-vs-distance); `passedStopFloor` floors placement after passed upstream stops; `estimate.positionFromEtaChain()` for segment placement; lightweight focus ETA updates re-run `sanitizeEtaChain`; focus mode passes `denseUpstream: true`
+- Focus refresh tiers: 5 s row poll → `applyLightweightFocusEtaUpdate()` (boarding clock only); full `refreshFocusedEstimate({ refreshUpstream: true })` on `snapshotMs` change or `FOCUS_REFRESH_INTERVAL_MS`
+- Upstream ETAs: `fetchEta(..., { useCache: true, cacheTtlMs: UPSTREAM_ETA_CACHE_TTL_MS })` unless `refreshUpstream`
+- Add-flow sheet: paint-first open — unhide sheet, `await` one `requestAnimationFrame`, then focus; idle-prefetch `fetchRoutes` (in-memory only); typeahead filters catalog and renders at most 8 suggestions — never a full-route datalist DOM
+- Add-flow sheet: cancel stale map loads with `loadToken` (same idea as `focusToken`)
+- Swallow errors only at prefetch/UI boundaries; `console.warn` for focus/estimate failures
+
+## Adding code
+
+Extend the owning module. Do not add dependencies or a build step.
+
+## When shipping JS changes
+
+Update this file if you add a module, shift responsibilities, or introduce a new pattern. Also update `docs/PRD.md` per [workflow.mdc](workflow.mdc) — same turn, no prompt needed.

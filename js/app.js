@@ -1,18 +1,37 @@
 import { initTheme } from "./theme.js";
 import {
-  WATCHLIST,
   REFRESH_INTERVAL_MS,
+  FOCUS_REFRESH_INTERVAL_MS,
   MAX_WALK_MINUTES,
   WALK_SPEED_M_PER_MIN,
 } from "./config.js";
 import {
   fetchEta,
   fetchStop,
+  fetchRoutes,
+  fetchRouteMeta,
+  fetchRouteStops,
+  resolveRouteStopCoords,
   formatArrivalDisplay,
   formatTime,
   prefetchRouteGeometry,
+  trackingNowMs,
 } from "./api.js";
-import { estimateBusPosition, pointAtCumDist, haversineMeters } from "./estimate.js";
+import {
+  loadWatchlist,
+  addEntry,
+  removeEntry,
+  hasEntry,
+  makeEntryId,
+  buildLabel,
+} from "./watchlist.js";
+import {
+  estimateBusPosition,
+  pointAtCumDist,
+  positionFromEtaChain,
+  sanitizeEtaChain,
+  haversineMeters,
+} from "./estimate.js";
 import {
   startGeolocation,
   getLastPosition,
@@ -28,12 +47,28 @@ import {
   isFocusPanelVisible,
   prefetchLeaflet,
 } from "./map.js";
+import { showPickerMap, destroyPickerMap } from "./picker.js";
 import { roadSnapStopsChunked } from "./routing.js";
 
 const cardsEl = document.getElementById("cards");
 const lastRefreshEl = document.getElementById("last-refresh");
-const WATCHLIST_INDEX = new Map(WATCHLIST.map((entry, i) => [entry.id, i]));
+const addSheetEl = document.getElementById("add-sheet");
+const addRouteInputEl = document.getElementById("add-route-input");
+const addRouteSuggestionsEl = document.getElementById("add-route-suggestions");
+const addDirectionFieldsetEl = document.getElementById("add-direction-fieldset");
+const MAX_ROUTE_SUGGESTIONS = 8;
+const SUGGESTION_BLUR_MS = 150;
+const addDirOutboundEl = document.getElementById("add-dir-outbound");
+const addDirInboundEl = document.getElementById("add-dir-inbound");
+const addSheetErrorEl = document.getElementById("add-sheet-error");
+const addSelectionLabelEl = document.getElementById("add-selection-label");
+const addConfirmBtnEl = document.getElementById("add-confirm-btn");
+const addMapEl = document.getElementById("add-map");
 const SORT_DEBOUNCE_MS = 2_000;
+const LONG_PRESS_MS = 500;
+
+let watchlist = loadWatchlist();
+let watchlistIndex = buildWatchlistIndex(watchlist);
 
 let refreshTimer = null;
 let isRefreshing = false;
@@ -41,13 +76,29 @@ let focusedIds = [];
 let focusToken = 0;
 let lastEtaById = new Map();
 let animFrame = null;
-let animStartedAt = 0;
 let didPrefetch = false;
 let stopCoordsById = new Map();
 let sortTimer = null;
 let lastSortedOrderKey = "";
 /** @type {Map<string, object>} */
 let focusEstimates = new Map();
+let lastFocusFullRefreshAt = 0;
+
+let routeCatalog = [];
+let suggestionBlurTimer = null;
+let addState = {
+  route: "",
+  direction: null,
+  routeMeta: null,
+  selectedStop: null,
+  loadToken: 0,
+};
+let longPressTimer = null;
+let longPressRowId = null;
+
+function buildWatchlistIndex(entries) {
+  return new Map(entries.map((entry, i) => [entry.id, i]));
+}
 
 function routeText(entry) {
   return entry.label.split(" · ")[0];
@@ -60,10 +111,13 @@ function createRowElement(entry) {
   row.setAttribute("role", "button");
   row.tabIndex = 0;
   row.innerHTML = `
-    <div class="row__route"></div>
-    <div class="row__times">
-      <span class="row__eta"></span>
-      <span class="row__next"></span>
+    <button type="button" class="row__remove" aria-label="Remove route">×</button>
+    <div class="row__main">
+      <div class="row__route"></div>
+      <div class="row__times">
+        <span class="row__eta"></span>
+        <span class="row__next"></span>
+      </div>
     </div>
   `;
   row.querySelector(".row__route").textContent = routeText(entry);
@@ -115,11 +169,38 @@ function renderRow(row, result) {
   }
 }
 
+function rebuildRows() {
+  const list = rowsContainer();
+  const existingIds = new Set(
+    [...list.querySelectorAll(".row")].map((row) => row.dataset.id)
+  );
+  const nextIds = new Set(watchlist.map((e) => e.id));
+
+  for (const id of existingIds) {
+    if (!nextIds.has(id)) {
+      list.querySelector(`[data-id="${id}"]`)?.remove();
+      lastEtaById.delete(id);
+      focusedIds = focusedIds.filter((fid) => fid !== id);
+    }
+  }
+
+  for (const entry of watchlist) {
+    if (!existingIds.has(entry.id)) {
+      list.appendChild(createRowElement(entry));
+    }
+  }
+
+  lastSortedOrderKey = "";
+}
+
 function ensureRows() {
-  if (cardsEl.children.length > 0) return;
+  if (cardsEl.querySelector(".route-list")) {
+    rebuildRows();
+    return;
+  }
   const list = document.createElement("div");
   list.className = "route-list";
-  for (const entry of WATCHLIST) {
+  for (const entry of watchlist) {
     list.appendChild(createRowElement(entry));
   }
   cardsEl.appendChild(list);
@@ -130,7 +211,7 @@ function rowsContainer() {
 }
 
 async function loadStopCoords() {
-  const uniqueIds = [...new Set(WATCHLIST.map((e) => e.stopId))];
+  const uniqueIds = [...new Set(watchlist.map((e) => e.stopId))];
   await Promise.all(
     uniqueIds.map(async (stopId) => {
       if (stopCoordsById.has(stopId)) return;
@@ -145,15 +226,15 @@ async function loadStopCoords() {
 }
 
 function orderedWatchlist(pos) {
-  if (!pos || stopCoordsById.size === 0) return WATCHLIST;
+  if (!pos || stopCoordsById.size === 0) return watchlist;
 
-  return [...WATCHLIST].sort((a, b) => {
+  return [...watchlist].sort((a, b) => {
     const stopA = stopCoordsById.get(a.stopId);
     const stopB = stopCoordsById.get(b.stopId);
     const distA = stopA ? haversineMeters(pos, stopA) : Number.POSITIVE_INFINITY;
     const distB = stopB ? haversineMeters(pos, stopB) : Number.POSITIVE_INFINITY;
     if (distA !== distB) return distA - distB;
-    return (WATCHLIST_INDEX.get(a.id) ?? 0) - (WATCHLIST_INDEX.get(b.id) ?? 0);
+    return (watchlistIndex.get(a.id) ?? 0) - (watchlistIndex.get(b.id) ?? 0);
   });
 }
 
@@ -161,7 +242,6 @@ function maxWalkableMeters() {
   return MAX_WALK_MINUTES * WALK_SPEED_M_PER_MIN;
 }
 
-/** True when crow-flies distance already exceeds a 20-min walk. */
 function isDefinitelyNotWalkable(pos, stop) {
   if (!pos || !stop) return false;
   return haversineMeters(pos, stop) > maxWalkableMeters();
@@ -169,7 +249,7 @@ function isDefinitelyNotWalkable(pos, stop) {
 
 function applyWalkability(pos) {
   const list = rowsContainer();
-  for (const entry of WATCHLIST) {
+  for (const entry of watchlist) {
     const row = list.querySelector(`[data-id="${entry.id}"]`);
     if (!row) continue;
     const stop = stopCoordsById.get(entry.stopId);
@@ -266,45 +346,41 @@ function startBusAnimations(estimatesById, token = focusToken) {
 
   const tracks = [];
   for (const [id, estimate] of estimatesById) {
-    if (
-      !estimate?.polyline?.length ||
-      estimate.busCumDist == null ||
-      !estimate.speedMPerMin ||
-      estimate.reason !== "ok"
-    ) {
-      continue;
-    }
+    if (!estimate?.polyline?.length || estimate.busCumDist == null) continue;
+    if (estimate.reason === "arriving" || estimate.reason === "seq-1") continue;
 
     const polyline = estimate.polyline;
     const boardingCum =
       estimate.boardingCumDist ??
       estimate.boardingStop?.cumDist ??
       polyline[polyline.length - 1].cumDist;
-    const startCum = estimate.busCumDist;
-    const speedMPerMin = estimate.speedMPerMin;
-    const minutes = estimate.minutesToBoard;
-    if (!minutes || minutes <= 0 || startCum >= boardingCum) continue;
 
-    const maxAdvanceM = Math.min(
-      speedMPerMin * (REFRESH_INTERVAL_MS / 60_000),
-      boardingCum - startCum
-    );
-    if (maxAdvanceM <= 0) continue;
+    if (estimate.etaChain?.length >= 2) {
+      tracks.push({ id, mode: "segment", estimate, boardingCum });
+      continue;
+    }
+
+    if (!estimate.speedMPerMin || !estimate.boardEtaMs) continue;
+    if (
+      estimate.reason !== "ok" &&
+      estimate.reason !== "default-speed" &&
+      estimate.reason !== "segment"
+    ) {
+      continue;
+    }
 
     tracks.push({
       id,
-      polyline,
-      startCum,
-      speedMPerMin,
-      maxAdvanceM,
+      mode: "speed",
+      estimate,
+      boardingCum,
+      speedMPerMin: estimate.speedMPerMin,
     });
   }
 
   if (!tracks.length) return;
 
-  animStartedAt = performance.now();
-
-  const tick = (now) => {
+  const tick = () => {
     if (
       token !== focusToken ||
       !isFocusPanelVisible() ||
@@ -312,24 +388,94 @@ function startBusAnimations(estimatesById, token = focusToken) {
     ) {
       return;
     }
-    const elapsedMin = (now - animStartedAt) / 60_000;
-    let anyActive = false;
+
+    let keepRunning = false;
     for (const track of tracks) {
       if (!focusedIds.includes(track.id)) continue;
-      const advance = Math.min(track.maxAdvanceM, track.speedMPerMin * elapsedMin);
-      const cum = track.startCum + advance;
-      const point = pointAtCumDist(track.polyline, cum);
+      const estimate = focusEstimates.get(track.id) ?? track.estimate;
+      const { boardingCum } = track;
+      let point = null;
+
+      if (track.mode === "segment") {
+        const now = trackingNowMs(estimate);
+        point = positionFromEtaChain(
+          estimate.etaChain,
+          estimate.polyline,
+          now,
+          boardingCum,
+          estimate.minCumDist ?? 0
+        );
+        const minsLeft = (estimate.boardEtaMs - now) / 60_000;
+        if (point && minsLeft > 0 && point.cumDist < boardingCum - 1) {
+          keepRunning = true;
+        }
+      } else {
+        const now = trackingNowMs(estimate);
+        const minsLeft = (estimate.boardEtaMs - now) / 60_000;
+        if (minsLeft > 0) {
+          const cum = Math.max(
+            estimate.minCumDist ?? 0,
+            Math.min(boardingCum, boardingCum - track.speedMPerMin * minsLeft)
+          );
+          point = pointAtCumDist(estimate.polyline, cum);
+          if (cum < boardingCum - 1) keepRunning = true;
+        }
+      }
+
       if (point) {
         updateBusMarker(track.id, { lat: point.lat, lng: point.lng });
       }
-      if (advance < track.maxAdvanceM) anyActive = true;
     }
-    if (anyActive) {
+
+    if (keepRunning) {
       animFrame = requestAnimationFrame(tick);
     }
   };
 
   animFrame = requestAnimationFrame(tick);
+}
+
+function applyLightweightFocusEtaUpdate(results) {
+  for (const { id, result } of results) {
+    if (!focusedIds.includes(id)) continue;
+    const estimate = focusEstimates.get(id);
+    if (!estimate || result?.error || !result?.first?.eta) continue;
+
+    const boardEtaMs = new Date(result.first.eta).getTime();
+    estimate.boardEtaMs = boardEtaMs;
+    estimate.snapshotMs = result.snapshotMs;
+    estimate.receivedAtMs = result.receivedAtMs;
+
+    const nowMs = trackingNowMs(result);
+    const minsLeft = (boardEtaMs - nowMs) / 60_000;
+    estimate.minutesToBoard = minsLeft > 0 ? minsLeft : null;
+
+    if (estimate.etaChain?.length) {
+      const boardingStopId = estimate.boardingStop?.stopId;
+      for (const point of estimate.etaChain) {
+        if (point.stopId === boardingStopId) {
+          point.etaMs = boardEtaMs;
+        }
+      }
+      estimate.etaChain = sanitizeEtaChain(estimate.etaChain);
+    }
+  }
+}
+
+function needsFullFocusRefresh(results) {
+  if (focusedIds.length === 0 || focusEstimates.size === 0) return false;
+
+  const snapshotChanged = focusedIds.some((id) => {
+    const eta = results.find((r) => r.id === id)?.result;
+    const estimate = focusEstimates.get(id);
+    if (!eta || eta.error || !estimate) return true;
+    return eta.snapshotMs !== estimate.snapshotMs;
+  });
+
+  const intervalElapsed =
+    Date.now() - lastFocusFullRefreshAt >= FOCUS_REFRESH_INTERVAL_MS;
+
+  return snapshotChanged || intervalElapsed;
 }
 
 async function loadEstimateForEntry(entry) {
@@ -347,13 +493,17 @@ async function loadEstimateForEntry(entry) {
   }
 
   const cached = lastEtaById.get(entry.id);
-  const etaPromise = cached?.first?.eta
-    ? Promise.resolve(cached)
-    : fetchEta(entry.route, entry.stopId, entry.direction);
+  const etaPromise =
+    cached?.first?.eta && cached.snapshotMs != null
+      ? Promise.resolve(cached)
+      : fetchEta(entry.route, entry.stopId, entry.direction);
 
   try {
     const eta = await etaPromise;
-    const estimate = await estimateBusPosition(entry, eta);
+    const estimate = await estimateBusPosition(entry, eta, {
+      denseUpstream: true,
+      refreshUpstream: true,
+    });
     return {
       ...estimate,
       boardingStop: estimate.boardingStop ?? boardingStop,
@@ -402,10 +552,9 @@ async function syncFocusMap({ refit = true } = {}) {
   const dual = ids.length >= 2;
   const youLatLng = dual ? null : getLastPosition();
 
-  // Progressive paint: open map ASAP with boarding stops only
   const quickRoutes = await Promise.all(
     ids.map(async (id, colorIndex) => {
-      const entry = WATCHLIST.find((e) => e.id === id);
+      const entry = watchlist.find((e) => e.id === id);
       let boardingStop = null;
       if (entry) {
         try {
@@ -459,7 +608,7 @@ async function syncFocusMap({ refit = true } = {}) {
 
   const estimates = await Promise.all(
     ids.map(async (id) => {
-      const entry = WATCHLIST.find((e) => e.id === id);
+      const entry = watchlist.find((e) => e.id === id);
       if (!entry) return [id, null];
       const estimate = await loadEstimateForEntry(entry);
       return [id, estimate];
@@ -470,6 +619,7 @@ async function syncFocusMap({ refit = true } = {}) {
 
   const estimatesById = new Map(estimates.filter(([, e]) => e));
   focusEstimates = estimatesById;
+  lastFocusFullRefreshAt = Date.now();
 
   updateFocusOverlays({
     routes: routesFromEstimates(ids, estimatesById),
@@ -484,13 +634,16 @@ function exitFocus() {
   focusToken += 1;
   focusedIds = [];
   focusEstimates.clear();
+  lastFocusFullRefreshAt = 0;
   stopBusAnimation();
   setFocusedRows([]);
   hideFocusPanel();
 }
 
 async function toggleFocus(entryId) {
-  const entry = WATCHLIST.find((e) => e.id === entryId);
+  if (isAddSheetOpen()) return;
+
+  const entry = watchlist.find((e) => e.id === entryId);
   if (!entry) return;
 
   const idx = focusedIds.indexOf(entryId);
@@ -513,7 +666,7 @@ async function toggleFocus(entryId) {
   await syncFocusMap({ refit: true });
 }
 
-async function refreshFocusedEstimate() {
+async function refreshFocusedEstimate({ refreshUpstream = true } = {}) {
   if (focusedIds.length === 0) return;
 
   const token = focusToken;
@@ -524,13 +677,15 @@ async function refreshFocusedEstimate() {
   try {
     const estimates = await Promise.all(
       ids.map(async (id) => {
-        const entry = WATCHLIST.find((e) => e.id === id);
+        const entry = watchlist.find((e) => e.id === id);
         const eta = lastEtaById.get(id);
         if (!entry || !eta) return [id, focusEstimates.get(id) ?? null];
         try {
-          const estimate = await estimateBusPosition(entry, eta);
+          const estimate = await estimateBusPosition(entry, eta, {
+            denseUpstream: true,
+            refreshUpstream,
+          });
           const prior = focusEstimates.get(id);
-          // Keep last pin if this poll couldn't place the bus (but ETA still valid)
           if (
             !estimate?.busLatLng &&
             prior?.busLatLng &&
@@ -557,6 +712,7 @@ async function refreshFocusedEstimate() {
 
     const estimatesById = new Map(estimates.filter(([, e]) => e));
     focusEstimates = estimatesById;
+    lastFocusFullRefreshAt = Date.now();
 
     updateFocusOverlays({
       routes: routesFromEstimates(ids, estimatesById),
@@ -571,14 +727,25 @@ async function refreshFocusedEstimate() {
 
 async function loadEntry(entry) {
   try {
-    const { first, second, generatedAt } = await fetchEta(
-      entry.route,
-      entry.stopId,
-      entry.direction
-    );
-    return { first, second, generatedAt, error: null };
+    const { first, second, generatedAt, snapshotMs, receivedAtMs } =
+      await fetchEta(entry.route, entry.stopId, entry.direction);
+    return {
+      first,
+      second,
+      generatedAt,
+      snapshotMs,
+      receivedAtMs,
+      error: null,
+    };
   } catch (err) {
-    return { first: null, second: null, generatedAt: null, error: err.message };
+    return {
+      first: null,
+      second: null,
+      generatedAt: null,
+      snapshotMs: null,
+      receivedAtMs: null,
+      error: err.message,
+    };
   }
 }
 
@@ -590,17 +757,91 @@ function scheduleIdle(fn) {
   }
 }
 
+async function prefetchRouteCatalog() {
+  try {
+    if (!routeCatalog.length) {
+      routeCatalog = await fetchRoutes();
+    }
+  } catch {
+    // ignore prefetch failures
+  }
+}
+
+function hideRouteSuggestions() {
+  if (suggestionBlurTimer) {
+    clearTimeout(suggestionBlurTimer);
+    suggestionBlurTimer = null;
+  }
+  addRouteSuggestionsEl.hidden = true;
+  addRouteSuggestionsEl.innerHTML = "";
+}
+
+function escapeHtml(text) {
+  return String(text)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function renderRouteSuggestions(matches) {
+  if (!matches.length) {
+    hideRouteSuggestions();
+    return;
+  }
+
+  addRouteSuggestionsEl.innerHTML = matches
+    .map((r) => {
+      const route = escapeHtml(r.route);
+      const dest = escapeHtml(r.destEn || "");
+      return `<li role="option"><button type="button" class="add-sheet__suggestion" data-route="${route}">${route}<span class="add-sheet__suggestion-dest">${dest}</span></button></li>`;
+    })
+    .join("");
+  addRouteSuggestionsEl.hidden = false;
+}
+
+async function updateRouteSuggestions(query) {
+  const q = query.trim().toUpperCase();
+  if (!q) {
+    hideRouteSuggestions();
+    return;
+  }
+
+  await prefetchRouteCatalog();
+  if (!isAddSheetOpen()) return;
+
+  const matches = [];
+  for (const r of routeCatalog) {
+    if (!r.route.toUpperCase().startsWith(q)) continue;
+    matches.push(r);
+    if (matches.length >= MAX_ROUTE_SUGGESTIONS) break;
+  }
+  renderRouteSuggestions(matches);
+}
+
+function selectRouteSuggestion(route) {
+  hideRouteSuggestions();
+  addRouteInputEl.value = route;
+  validateAndLoadRoute(route);
+}
+
+function yieldToPaint() {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => resolve());
+  });
+}
+
 async function prefetchWatchlistGeometry() {
   if (didPrefetch) return;
   didPrefetch = true;
 
   await prefetchLeaflet();
+  await prefetchRouteCatalog();
 
-  for (const entry of WATCHLIST) {
+  for (const entry of watchlist) {
     try {
       const coords = await prefetchRouteGeometry(entry);
       if (coords.length > 1) {
-        // Warm OSRM / stop-to-stop cache in the background
         await roadSnapStopsChunked(coords);
       }
     } catch {
@@ -619,7 +860,7 @@ async function refreshAll() {
   });
 
   const results = await Promise.all(
-    WATCHLIST.map(async (entry) => ({
+    watchlist.map(async (entry) => ({
       id: entry.id,
       result: await loadEntry(entry),
     }))
@@ -635,7 +876,11 @@ async function refreshAll() {
   isRefreshing = false;
 
   if (focusedIds.length > 0) {
-    refreshFocusedEstimate();
+    if (needsFullFocusRefresh(results)) {
+      refreshFocusedEstimate({ refreshUpstream: true });
+    } else {
+      applyLightweightFocusEtaUpdate(results);
+    }
   }
 
   scheduleIdle(prefetchWatchlistGeometry);
@@ -644,6 +889,295 @@ async function refreshAll() {
 function startAutoRefresh() {
   if (refreshTimer) clearInterval(refreshTimer);
   refreshTimer = setInterval(refreshAll, REFRESH_INTERVAL_MS);
+}
+
+function setAddError(message) {
+  if (!message) {
+    addSheetErrorEl.hidden = true;
+    addSheetErrorEl.textContent = "";
+    return;
+  }
+  addSheetErrorEl.hidden = false;
+  addSheetErrorEl.textContent = message;
+}
+
+function updateAddConfirmState() {
+  const stop = addState.selectedStop;
+  if (!stop || !addState.route || !addState.direction) {
+    addConfirmBtnEl.disabled = true;
+    addSelectionLabelEl.textContent = "Select a stop";
+    return;
+  }
+
+  const duplicate = hasEntry(watchlist, {
+    route: addState.route,
+    stopId: stop.stopId,
+    direction: addState.direction,
+  });
+
+  if (duplicate) {
+    addConfirmBtnEl.disabled = true;
+    addSelectionLabelEl.textContent = `${stop.nameEn} — already on your list`;
+    return;
+  }
+
+  addConfirmBtnEl.disabled = false;
+  addSelectionLabelEl.textContent = stop.nameEn;
+}
+
+function setDirectionButtons(direction) {
+  addDirOutboundEl.classList.toggle(
+    "add-sheet__dir-btn--active",
+    direction === "O"
+  );
+  addDirInboundEl.classList.toggle(
+    "add-sheet__dir-btn--active",
+    direction === "I"
+  );
+}
+
+function updateDirectionLabels(meta) {
+  if (!meta) {
+    addDirOutboundEl.textContent = "Outbound";
+    addDirInboundEl.textContent = "Inbound";
+    return;
+  }
+  addDirOutboundEl.textContent = `${meta.origEn} → ${meta.destEn}`;
+  addDirInboundEl.textContent = `${meta.destEn} → ${meta.origEn}`;
+}
+
+function resetAddState() {
+  addState = {
+    route: "",
+    direction: null,
+    routeMeta: null,
+    selectedStop: null,
+    loadToken: addState.loadToken + 1,
+  };
+  addRouteInputEl.value = "";
+  hideRouteSuggestions();
+  addDirectionFieldsetEl.disabled = true;
+  setDirectionButtons(null);
+  updateDirectionLabels(null);
+  addMapEl.classList.remove("add-sheet__map--ready");
+  destroyPickerMap();
+  setAddError("");
+  updateAddConfirmState();
+}
+
+function isAddSheetOpen() {
+  return !addSheetEl.hidden;
+}
+
+function closeAddSheet() {
+  addSheetEl.hidden = true;
+  document.body.classList.remove("add-sheet-open");
+  resetAddState();
+}
+
+async function openAddSheet() {
+  if (isFocusPanelVisible()) {
+    exitFocus();
+  }
+
+  resetAddState();
+  addSheetEl.hidden = false;
+  document.body.classList.add("add-sheet-open");
+
+  // Let the sheet paint before focus / catalog work.
+  await yieldToPaint();
+  if (!isAddSheetOpen()) return;
+
+  addRouteInputEl.focus();
+  startGeolocation();
+  prefetchRouteCatalog();
+}
+
+async function validateAndLoadRoute(routeValue) {
+  const route = routeValue.trim().toUpperCase();
+  hideRouteSuggestions();
+
+  if (!route) {
+    addState.route = "";
+    addState.routeMeta = null;
+    addState.direction = null;
+    addState.selectedStop = null;
+    addDirectionFieldsetEl.disabled = true;
+    setDirectionButtons(null);
+    updateDirectionLabels(null);
+    addMapEl.classList.remove("add-sheet__map--ready");
+    destroyPickerMap();
+    setAddError("");
+    updateAddConfirmState();
+    return;
+  }
+
+  setAddError("");
+  try {
+    const meta = await fetchRouteMeta(route);
+    addState.route = meta.route;
+    addState.routeMeta = meta;
+    addState.direction = null;
+    addState.selectedStop = null;
+    addDirectionFieldsetEl.disabled = false;
+    updateDirectionLabels(meta);
+    setDirectionButtons(null);
+    addMapEl.classList.remove("add-sheet__map--ready");
+    destroyPickerMap();
+    updateAddConfirmState();
+  } catch {
+    addState.route = "";
+    addState.routeMeta = null;
+    addState.direction = null;
+    addState.selectedStop = null;
+    addDirectionFieldsetEl.disabled = true;
+    setDirectionButtons(null);
+    updateDirectionLabels(null);
+    addMapEl.classList.remove("add-sheet__map--ready");
+    destroyPickerMap();
+    setAddError(`Route ${route} not found`);
+    updateAddConfirmState();
+  }
+}
+
+async function loadPickerForDirection(direction) {
+  if (!addState.route || !direction) return;
+
+  const token = ++addState.loadToken;
+  addState.direction = direction;
+  addState.selectedStop = null;
+  setDirectionButtons(direction);
+  setAddError("");
+  updateAddConfirmState();
+
+  addMapEl.classList.remove("add-sheet__map--ready");
+  destroyPickerMap();
+
+  try {
+    const routeStops = await fetchRouteStops(addState.route, direction);
+    const stops = await resolveRouteStopCoords(routeStops);
+    if (token !== addState.loadToken) return;
+
+    if (!stops.length) {
+      setAddError("No stops found for this direction");
+      return;
+    }
+
+    addMapEl.classList.add("add-sheet__map--ready");
+    const youLatLng = getLastPosition();
+
+    await showPickerMap({
+      stops,
+      youLatLng,
+      onSelect: (stop) => {
+        addState.selectedStop = stop;
+        updateAddConfirmState();
+      },
+      onPositionChange: onPositionChange,
+    });
+  } catch (err) {
+    if (token !== addState.loadToken) return;
+    setAddError(err.message || "Failed to load stops");
+  }
+}
+
+function routeDestForDirection(meta, direction) {
+  if (!meta) return "";
+  return direction === "I" ? meta.origEn : meta.destEn;
+}
+
+async function confirmAddEntry() {
+  const { route, direction, routeMeta, selectedStop } = addState;
+  if (!route || !direction || !selectedStop) return;
+
+  const entry = {
+    id: makeEntryId(route, direction, selectedStop.stopId),
+    route,
+    stopId: selectedStop.stopId,
+    direction,
+    label: buildLabel(
+      route,
+      routeDestForDirection(routeMeta, direction),
+      selectedStop.nameEn
+    ),
+  };
+
+  const { entries, added, reason } = addEntry(watchlist, entry);
+  if (!added) {
+    if (reason === "duplicate") {
+      setAddError("Already on your list");
+    }
+    return;
+  }
+
+  watchlist = entries;
+  watchlistIndex = buildWatchlistIndex(watchlist);
+  stopCoordsById.set(selectedStop.stopId, {
+    lat: selectedStop.lat,
+    lng: selectedStop.lng,
+  });
+
+  closeAddSheet();
+  rebuildRows();
+  await refreshAll();
+
+  const pos = getLastPosition();
+  if (pos) {
+    applyListOrder(pos);
+    applyWalkability(pos);
+  }
+}
+
+function confirmRemoveEntry(id) {
+  const entry = watchlist.find((e) => e.id === id);
+  if (!entry) return;
+
+  const label = routeText(entry);
+  if (!window.confirm(`Remove ${label} from your list?`)) return;
+
+  if (focusedIds.includes(id)) {
+    focusedIds = focusedIds.filter((fid) => fid !== id);
+    if (focusedIds.length === 0) {
+      exitFocus();
+    } else {
+      syncFocusMap({ refit: true });
+    }
+  }
+
+  const { entries, removed } = removeEntry(watchlist, id);
+  if (!removed) return;
+
+  watchlist = entries;
+  watchlistIndex = buildWatchlistIndex(watchlist);
+  lastEtaById.delete(id);
+  rebuildRows();
+  refreshAll();
+
+  const pos = getLastPosition();
+  if (pos) {
+    applyListOrder(pos);
+    applyWalkability(pos);
+  }
+}
+
+function enterRowEditMode() {
+  cardsEl.querySelectorAll(".row").forEach((row) => {
+    row.classList.add("row--editing");
+  });
+}
+
+function exitRowEditMode() {
+  cardsEl.querySelectorAll(".row--editing").forEach((row) => {
+    row.classList.remove("row--editing");
+  });
+}
+
+function clearLongPress() {
+  if (longPressTimer) {
+    clearTimeout(longPressTimer);
+    longPressTimer = null;
+  }
+  longPressRowId = null;
 }
 
 ensureRows();
@@ -672,9 +1206,86 @@ document.addEventListener("themechange", () => {
   }
 });
 
+document.getElementById("add-route-btn")?.addEventListener("click", (event) => {
+  event.stopPropagation();
+  openAddSheet();
+});
+
+document.getElementById("add-sheet-close")?.addEventListener("click", () => {
+  closeAddSheet();
+});
+
+document.getElementById("add-cancel-btn")?.addEventListener("click", () => {
+  closeAddSheet();
+});
+
+addRouteInputEl?.addEventListener("input", () => {
+  updateRouteSuggestions(addRouteInputEl.value);
+});
+
+addRouteInputEl?.addEventListener("change", () => {
+  validateAndLoadRoute(addRouteInputEl.value);
+});
+
+addRouteInputEl?.addEventListener("blur", () => {
+  suggestionBlurTimer = setTimeout(() => {
+    suggestionBlurTimer = null;
+    hideRouteSuggestions();
+    validateAndLoadRoute(addRouteInputEl.value);
+  }, SUGGESTION_BLUR_MS);
+});
+
+addRouteInputEl?.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    hideRouteSuggestions();
+    validateAndLoadRoute(addRouteInputEl.value);
+  } else if (event.key === "Escape") {
+    hideRouteSuggestions();
+  }
+});
+
+addRouteSuggestionsEl?.addEventListener("pointerdown", (event) => {
+  const btn = event.target.closest(".add-sheet__suggestion");
+  if (!btn) return;
+  event.preventDefault();
+  selectRouteSuggestion(btn.dataset.route);
+});
+
+addDirOutboundEl?.addEventListener("click", () => {
+  loadPickerForDirection("O");
+});
+
+addDirInboundEl?.addEventListener("click", () => {
+  loadPickerForDirection("I");
+});
+
+addConfirmBtnEl?.addEventListener("click", () => {
+  confirmAddEntry();
+});
+
+addSheetEl?.addEventListener("click", (event) => {
+  if (event.target === addSheetEl) {
+    closeAddSheet();
+  }
+});
+
 cardsEl.addEventListener("click", (event) => {
+  const removeBtn = event.target.closest(".row__remove");
+  if (removeBtn) {
+    event.stopPropagation();
+    const row = removeBtn.closest(".row");
+    if (row) confirmRemoveEntry(row.dataset.id);
+    exitRowEditMode();
+    return;
+  }
+
   const row = event.target.closest(".row");
   if (!row) return;
+  if (row.classList.contains("row--editing")) {
+    event.stopPropagation();
+    return;
+  }
   event.stopPropagation();
   toggleFocus(row.dataset.id);
 });
@@ -687,6 +1298,24 @@ cardsEl.addEventListener("keydown", (event) => {
   toggleFocus(row.dataset.id);
 });
 
+cardsEl.addEventListener("pointerdown", (event) => {
+  const row = event.target.closest(".row");
+  if (!row || event.target.closest(".row__remove")) return;
+
+  clearLongPress();
+  longPressRowId = row.dataset.id;
+  longPressTimer = setTimeout(() => {
+    longPressTimer = null;
+    enterRowEditMode();
+  }, LONG_PRESS_MS);
+});
+
+cardsEl.addEventListener("pointerup", clearLongPress);
+cardsEl.addEventListener("pointercancel", clearLongPress);
+cardsEl.addEventListener("pointerleave", (event) => {
+  if (event.target.closest(".row")) clearLongPress();
+});
+
 document.getElementById("focus-panel").addEventListener("click", (event) => {
   event.stopPropagation();
 });
@@ -696,12 +1325,23 @@ document.getElementById("theme-toggle")?.addEventListener("click", (event) => {
 });
 
 document.getElementById("app").addEventListener("click", (event) => {
+  if (event.target.closest(".row--editing")) return;
+
+  exitRowEditMode();
+
   if (
     event.target.closest(".row") ||
     event.target.closest("#focus-panel") ||
-    event.target.closest("#theme-toggle")
+    event.target.closest(".nav-dock") ||
+    event.target.closest("#add-sheet")
   ) {
     return;
   }
   refreshAll();
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && isAddSheetOpen()) {
+    closeAddSheet();
+  }
 });

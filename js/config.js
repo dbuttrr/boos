@@ -65,6 +65,12 @@ export const LOCATION = {
 
 export const REFRESH_INTERVAL_MS = 5_000;
 
+/** Full focus-map re-estimate (upstream ETAs + repaint) at most this often. */
+export const FOCUS_REFRESH_INTERVAL_MS = 60_000;
+
+/** Upstream stop ETA cache TTL during focus tracking. */
+export const UPSTREAM_ETA_CACHE_TTL_MS = 60_000;
+
 /**
  * Stops whose straight-line distance already exceeds this walking time
  * are treated as definitely not walkable (actual paths are longer).
@@ -86,3 +92,6 @@ export const MAX_BUS_SPEED_M_PER_MIN = 600;
 
 /** Fallback speed when upstream ETA matching fails (~15 km/h). */
 export const DEFAULT_BUS_SPEED_M_PER_MIN = 250;
+
+/** Bus marker chase factor per frame toward target (0–1). */
+export const BUS_MARKER_LERP = 0.08;

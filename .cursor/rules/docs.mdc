@@ -1,0 +1,36 @@
+---
+description: Documentation split and drift prevention
+globs: docs/**,README.md,AGENTS.md
+alwaysApply: false
+---
+
+# Documentation
+
+## Split
+
+| Doc | Contains |
+|-----|----------|
+| `docs/PRD.md` | Product behavior, backlog, non-goals, constraints |
+| `README.md` | Quick start, deploy, `config.js` format, stop-ID lookup |
+| `AGENTS.md` | Short index linking PRD + rules |
+
+## Rules
+
+- Do not duplicate API URL blocks in both PRD and README — link instead
+- User-visible behavior changes → update `docs/PRD.md`
+- Setup/deploy/config changes → update `README.md`
+- When README describes app behavior, verify against `js/config.js` and `js/app.js`
+
+## Ship checklist (agent — do automatically)
+
+When completing work, follow [workflow.mdc](workflow.mdc). In the same turn as code:
+
+1. `docs/PRD.md` — backlog → Current behavior; constraints if needed
+2. `README.md` — only if setup or "How it works" summary is wrong
+3. Matching rule file (`javascript.mdc`, `styles.mdc`, `product.mdc`, or `docs.mdc`)
+
+Do not mark a task complete without these updates.
+
+## Drift checks
+
+README must reflect current `REFRESH_INTERVAL_MS` and major features listed in PRD "Current behavior". If unsure, PRD is the behavior source of truth.

@@ -1,13 +1,18 @@
+import { BUS_MARKER_LERP } from "./config.js";
+
 let map = null;
 let tileLayer = null;
 let youMarker = null;
 /** @type {Map<string, { fullRouteLine: any, routeLine: any, stopMarker: any, stopDots: any[], busMarker: any, colorIndex: number }>} */
 let routeLayers = new Map();
+/** @type {Map<string, { lat: number, lng: number, targetLat: number, targetLng: number }>} */
+let busChase = new Map();
+let busChaseFrame = null;
 let leafletReady = null;
 let themeObserver = null;
 let currentTheme = null;
 
-const CARTO_ATTR =
+export const CARTO_ATTR =
   '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/attributions">CARTO</a>';
 
 export const ROUTE_COLORS = [
@@ -40,7 +45,7 @@ function getAppTheme() {
   return document.documentElement.dataset.theme === "dark" ? "dark" : "light";
 }
 
-function cartoUrl(theme) {
+export function cartoUrl(theme) {
   const style = theme === "dark" ? "dark_all" : "light_all";
   return `https://{s}.basemaps.cartocdn.com/${style}/{z}/{x}/{y}{r}.png`;
 }
@@ -67,7 +72,7 @@ function fullRouteLineStyle(theme) {
   };
 }
 
-function loadLeaflet() {
+export function loadLeaflet() {
   if (window.L) return Promise.resolve(window.L);
   if (leafletReady) return leafletReady;
 
@@ -98,7 +103,7 @@ export function prefetchLeaflet() {
   return loadLeaflet().catch(() => null);
 }
 
-function youIcon() {
+export function youIcon() {
   const L = window.L;
   return L.divIcon({
     className: "focus-marker focus-marker--you",
@@ -108,17 +113,18 @@ function youIcon() {
   });
 }
 
-function stopIcon() {
+export function stopIcon({ selected = false } = {}) {
   const L = window.L;
+  const modifier = selected ? " focus-marker--stop-selected" : "";
   return L.divIcon({
-    className: "focus-marker focus-marker--stop",
+    className: `focus-marker focus-marker--stop${modifier}`,
     html: `<span class="focus-marker__stop" aria-hidden="true"><span class="focus-marker__stop-head"></span><span class="focus-marker__stop-stem"></span></span>`,
     iconSize: [22, 30],
     iconAnchor: [11, 28],
   });
 }
 
-function stopDotIcon() {
+export function stopDotIcon() {
   const L = window.L;
   return L.divIcon({
     className: "focus-marker focus-marker--stop-dot",
@@ -220,8 +226,110 @@ function clearRouteLayer(layer) {
   }
 }
 
+function stopBusChase() {
+  if (busChaseFrame) {
+    cancelAnimationFrame(busChaseFrame);
+    busChaseFrame = null;
+  }
+  busChase.clear();
+}
+
+function ensureBusChaseLoop() {
+  if (busChaseFrame) return;
+  if (busChase.size === 0) return;
+
+  const tick = () => {
+    if (!map || busChase.size === 0) {
+      busChaseFrame = null;
+      return;
+    }
+
+    let anyMoving = false;
+    for (const [routeId, chase] of busChase) {
+      const layer = routeLayers.get(routeId);
+      if (!layer?.busMarker) continue;
+
+      const dLat = chase.targetLat - chase.lat;
+      const dLng = chase.targetLng - chase.lng;
+      if (Math.abs(dLat) > 1e-7 || Math.abs(dLng) > 1e-7) {
+        chase.lat += dLat * BUS_MARKER_LERP;
+        chase.lng += dLng * BUS_MARKER_LERP;
+        layer.busMarker.setLatLng([chase.lat, chase.lng]);
+        anyMoving = true;
+      } else {
+        chase.lat = chase.targetLat;
+        chase.lng = chase.targetLng;
+        layer.busMarker.setLatLng([chase.lat, chase.lng]);
+      }
+    }
+
+    busChaseFrame = anyMoving ? requestAnimationFrame(tick) : null;
+  };
+
+  busChaseFrame = requestAnimationFrame(tick);
+}
+
+function setBusMarkerPosition(routeId, busLatLng, { smooth = false } = {}) {
+  if (!map || panelEl().hidden) return;
+  const layer = routeLayers.get(routeId);
+  if (!layer) return;
+  const L = window.L;
+
+  if (!busLatLng) {
+    busChase.delete(routeId);
+    if (layer.busMarker) {
+      map.removeLayer(layer.busMarker);
+      layer.busMarker = null;
+    }
+    if (busChase.size === 0) stopBusChase();
+    return;
+  }
+
+  if (!layer.busMarker) {
+    layer.busMarker = L.marker([busLatLng.lat, busLatLng.lng], {
+      icon: busIcon(layer.colorIndex),
+      title: "Approx. bus location",
+      zIndexOffset: 400,
+    }).addTo(map);
+    busChase.set(routeId, {
+      lat: busLatLng.lat,
+      lng: busLatLng.lng,
+      targetLat: busLatLng.lat,
+      targetLng: busLatLng.lng,
+    });
+    return;
+  }
+
+  if (!smooth) {
+    busChase.set(routeId, {
+      lat: busLatLng.lat,
+      lng: busLatLng.lng,
+      targetLat: busLatLng.lat,
+      targetLng: busLatLng.lng,
+    });
+    layer.busMarker.setLatLng([busLatLng.lat, busLatLng.lng]);
+    return;
+  }
+
+  const chase = busChase.get(routeId);
+  if (chase) {
+    chase.targetLat = busLatLng.lat;
+    chase.targetLng = busLatLng.lng;
+  } else {
+    const current = layer.busMarker.getLatLng();
+    busChase.set(routeId, {
+      lat: current.lat,
+      lng: current.lng,
+      targetLat: busLatLng.lat,
+      targetLng: busLatLng.lng,
+    });
+  }
+  ensureBusChaseLoop();
+}
+
 function clearOverlays() {
   if (!map) return;
+  stopBusChase();
   if (youMarker) {
     map.removeLayer(youMarker);
     youMarker = null;
@@ -414,29 +522,8 @@ export function updateYouMarker(youLatLng, { refit = false } = {}) {
   }
 }
 
-export function updateBusMarker(routeId, busLatLng) {
-  if (!map || panelEl().hidden) return;
-  const layer = routeLayers.get(routeId);
-  if (!layer) return;
-  const L = window.L;
-
-  if (!busLatLng) {
-    if (layer.busMarker) {
-      map.removeLayer(layer.busMarker);
-      layer.busMarker = null;
-    }
-    return;
-  }
-
-  if (layer.busMarker) {
-    layer.busMarker.setLatLng([busLatLng.lat, busLatLng.lng]);
-  } else {
-    layer.busMarker = L.marker([busLatLng.lat, busLatLng.lng], {
-      icon: busIcon(layer.colorIndex),
-      title: "Approx. bus location",
-      zIndexOffset: 400,
-    }).addTo(map);
-  }
+export function updateBusMarker(routeId, busLatLng, { smooth = false } = {}) {
+  setBusMarkerPosition(routeId, busLatLng, { smooth });
 }
 
 export function hideFocusPanel() {

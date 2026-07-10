@@ -1,0 +1,28 @@
+---
+description: Product scope and north star for HK Citybus ETA
+alwaysApply: true
+---
+
+# Product
+
+Read [docs/PRD.md](docs/PRD.md) before planning or shipping new features.
+
+## Hard constraints
+
+- Static site only — no backend, bundler, or framework
+- Citybus (CTB) via data.gov.hk only
+- Mobile-first personal utility
+- Watchlist in localStorage; `js/config.js` seeds defaults on first visit
+
+## Before building
+
+1. Check PRD **backlog** and **non-goals**
+2. Prefer extending existing modules over new abstractions
+
+## After shipping (mandatory)
+
+Follow [.cursor/rules/workflow.mdc](workflow.mdc): update `docs/PRD.md` and this file if scope/constraints/non-goals changed — **in the same turn as the code**, without being asked.
+
+## Out of scope (see PRD non-goals)
+
+Accounts, other bus operators, trip planning, push notifications, native app wrapper.

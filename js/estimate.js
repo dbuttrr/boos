@@ -1,6 +1,7 @@
 import {
   ARRIVING_THRESHOLD_MIN,
   UPSTREAM_ETA_SAMPLE_SIZE,
+  UPSTREAM_ETA_CACHE_TTL_MS,
   MIN_BUS_SPEED_M_PER_MIN,
   MAX_BUS_SPEED_M_PER_MIN,
   DEFAULT_BUS_SPEED_M_PER_MIN,
@@ -9,6 +10,7 @@ import {
   fetchEta,
   fetchRouteStops,
   resolveRouteStopCoords,
+  trackingNowMs,
 } from "./api.js";
 import { roadSnapStops, roadSnapStopsChunked } from "./routing.js";
 
@@ -132,9 +134,9 @@ export function sampleUpstreamStops(routeStops, boardingIndex, maxSamples) {
   return sampled;
 }
 
-function minutesUntil(isoEta) {
+function minutesUntil(isoEta, nowMs = Date.now()) {
   if (!isoEta) return null;
-  const ms = new Date(isoEta).getTime() - Date.now();
+  const ms = new Date(isoEta).getTime() - nowMs;
   if (!Number.isFinite(ms) || ms <= 0) return null;
   return ms / 60_000;
 }
@@ -178,10 +180,238 @@ function emptyEstimate(extra = {}) {
   };
 }
 
-function placeWithDefaultSpeed(polyline, boardingCum, minutesToBoard) {
+function latLngFromCum(polyline, cumDist) {
+  const point = pointAtCumDist(polyline, cumDist);
+  return point ? { lat: point.lat, lng: point.lng, cumDist: point.cumDist } : null;
+}
+
+function segmentSpeedMPerMin(a, b) {
+  const spanMs = b.etaMs - a.etaMs;
+  if (spanMs <= 0) return null;
+  const dist = b.cumDist - a.cumDist;
+  if (dist <= 0) return null;
+  return dist / (spanMs / 60_000);
+}
+
+/**
+ * Drop upstream points whose ETA is later than a downstream stop.
+ * Prefer mid-route evidence over terminus schedule noise so the marker
+ * is not pinned at cumDist 0 until a future origin departure.
+ * Chain must already be sorted by cumDist ascending.
+ */
+export function sanitizeEtaChain(chain) {
+  if (!chain?.length) return chain ?? [];
+  const out = [];
+  for (const point of chain) {
+    while (out.length && point.etaMs < out[out.length - 1].etaMs) {
+      out.pop();
+    }
+    out.push(point);
+  }
+  return out;
+}
+
+/**
+ * Furthest approach stop the boarding bus has already passed (no matching
+ * upstream ETA before boarding). Floors placement so default-speed cannot
+ * snap the marker back to the terminus after mid-route ETAs disappear.
+ */
+function passedStopFloor({
+  routeStops,
+  boardingIndex,
+  upstreamEtas,
+  first,
+  polyline,
+  stopCoordsById,
+}) {
+  const byStopId = new Map(
+    (upstreamEtas ?? []).filter(Boolean).map((item) => [item.stopId, item])
+  );
+  let minCum = 0;
+
+  for (const rs of routeStops.slice(0, boardingIndex)) {
+    const item = byStopId.get(rs.stopId);
+    if (!item) continue;
+
+    if (matchBusEta(item.eta, first)?.eta) break;
+
+    const stopCoord = stopCoordsById.get(rs.stopId);
+    if (!stopCoord) continue;
+    minCum = Math.max(minCum, nearestCumDist(polyline, stopCoord));
+  }
+
+  return minCum;
+}
+
+function buildEtaChain({
+  routeStops,
+  boardingIndex,
+  boardingStopId,
+  upstreamEtas,
+  first,
+  polyline,
+  stopCoordsById,
+  boardingCum,
+}) {
+  const byStopId = new Map(
+    (upstreamEtas ?? []).filter(Boolean).map((item) => [item.stopId, item])
+  );
+  const chain = [];
+
+  for (const rs of routeStops.slice(0, boardingIndex + 1)) {
+    const stopCoord = stopCoordsById.get(rs.stopId);
+    if (!stopCoord) continue;
+
+    let etaMs = null;
+    if (rs.stopId === boardingStopId) {
+      etaMs = new Date(first.eta).getTime();
+    } else {
+      const item = byStopId.get(rs.stopId);
+      if (!item) continue;
+      const matched = matchBusEta(item.eta, first);
+      if (!matched?.eta) continue;
+      etaMs = new Date(matched.eta).getTime();
+    }
+
+    if (!Number.isFinite(etaMs)) continue;
+
+    chain.push({
+      stopId: rs.stopId,
+      seq: rs.seq,
+      etaMs,
+      cumDist: nearestCumDist(polyline, stopCoord),
+    });
+  }
+
+  chain.sort((a, b) => a.cumDist - b.cumDist);
+
+  const deduped = [];
+  for (const point of chain) {
+    const prev = deduped[deduped.length - 1];
+    if (prev && prev.stopId === point.stopId) continue;
+    deduped.push(point);
+  }
+
+  const boardingPoint = deduped.find((p) => p.stopId === boardingStopId);
+  if (boardingPoint) {
+    boardingPoint.cumDist = boardingCum;
+  }
+
+  return sanitizeEtaChain(deduped);
+}
+
+/**
+ * Place bus along polyline using matched per-stop ETAs and synced tracking time.
+ * @param {number} [minCum=0] - floor from passed upstream stops
+ */
+export function positionFromEtaChain(
+  chain,
+  polyline,
+  trackingNowMs,
+  boardingCum,
+  minCum = 0
+) {
+  if (!chain?.length || !polyline?.length) return null;
+  const floor = Math.max(0, minCum);
+
+  if (chain.length === 1) {
+    const only = chain[0];
+    if (trackingNowMs >= only.etaMs) {
+      return latLngFromCum(
+        polyline,
+        Math.min(Math.max(floor, only.cumDist), boardingCum)
+      );
+    }
+    return latLngFromCum(
+      polyline,
+      Math.max(floor, only.cumDist - DEFAULT_BUS_SPEED_M_PER_MIN)
+    );
+  }
+
+  for (let i = 0; i < chain.length - 1; i++) {
+    const a = chain[i];
+    const b = chain[i + 1];
+    if (trackingNowMs >= a.etaMs && trackingNowMs < b.etaMs) {
+      const span = b.etaMs - a.etaMs;
+      const progress = span > 0 ? (trackingNowMs - a.etaMs) / span : 0;
+      const busCumDist = Math.min(
+        boardingCum,
+        Math.max(floor, a.cumDist + progress * (b.cumDist - a.cumDist))
+      );
+      return latLngFromCum(polyline, busCumDist);
+    }
+  }
+
+  const first = chain[0];
+  if (trackingNowMs < first.etaMs) {
+    const next = chain[1];
+    const speed =
+      segmentSpeedMPerMin(first, next) ?? DEFAULT_BUS_SPEED_M_PER_MIN;
+    const minsUntilFirst = (first.etaMs - trackingNowMs) / 60_000;
+    const busCumDist = Math.max(
+      floor,
+      first.cumDist - speed * minsUntilFirst
+    );
+    return latLngFromCum(polyline, busCumDist);
+  }
+
+  const last = chain[chain.length - 1];
+  if (trackingNowMs >= last.etaMs) {
+    return latLngFromCum(
+      polyline,
+      Math.min(Math.max(floor, last.cumDist), boardingCum)
+    );
+  }
+
+  // Between segment windows (e.g. non-monotonic ETAs): hold at last passed stop.
+  for (let i = chain.length - 2; i >= 0; i--) {
+    if (trackingNowMs >= chain[i].etaMs) {
+      return latLngFromCum(
+        polyline,
+        Math.min(Math.max(floor, chain[i].cumDist), boardingCum)
+      );
+    }
+  }
+
+  return latLngFromCum(polyline, floor);
+}
+
+function placeFromEtaChain(chain, polyline, trackingNowMs, boardingCum, minCum = 0) {
+  const placed = positionFromEtaChain(
+    chain,
+    polyline,
+    trackingNowMs,
+    boardingCum,
+    minCum
+  );
+  if (!placed) return null;
+
+  let speedMPerMin = null;
+  for (let i = 0; i < chain.length - 1; i++) {
+    const a = chain[i];
+    const b = chain[i + 1];
+    if (trackingNowMs >= a.etaMs && trackingNowMs < b.etaMs) {
+      speedMPerMin = segmentSpeedMPerMin(a, b);
+      break;
+    }
+  }
+
+  return {
+    reason: "segment",
+    busCumDist: placed.cumDist,
+    busLatLng: { lat: placed.lat, lng: placed.lng },
+    speedMPerMin: speedMPerMin ? clampSpeed(speedMPerMin) : null,
+    etaChain: chain,
+  };
+}
+
+function placeWithDefaultSpeed(polyline, boardingCum, minutesToBoard, minCum = 0) {
   const speedMPerMin = DEFAULT_BUS_SPEED_M_PER_MIN;
   const remainingDist = speedMPerMin * minutesToBoard;
-  const busCumDist = Math.max(0, Math.min(boardingCum, boardingCum - remainingDist));
+  const busCumDist = Math.max(
+    minCum,
+    Math.min(boardingCum, boardingCum - remainingDist)
+  );
   const busLatLng = pointAtCumDist(polyline, busCumDist);
 
   return {
@@ -194,7 +424,13 @@ function placeWithDefaultSpeed(polyline, boardingCum, minutesToBoard) {
   };
 }
 
-function placeFromSegments(segments, polyline, boardingCum, minutesToBoard) {
+function placeFromSegments(
+  segments,
+  polyline,
+  boardingCum,
+  minutesToBoard,
+  minCum = 0
+) {
   segments.sort((a, b) => a.dist - b.dist);
   const near = segments.slice(0, Math.min(3, segments.length));
   const totalWeight = near.reduce((sum, s) => sum + s.weight, 0);
@@ -202,7 +438,12 @@ function placeFromSegments(segments, polyline, boardingCum, minutesToBoard) {
     near.reduce((sum, s) => sum + s.speed * s.weight, 0) / totalWeight;
 
   if (!Number.isFinite(rawSpeed) || rawSpeed <= 0) {
-    return placeWithDefaultSpeed(polyline, boardingCum, minutesToBoard);
+    return placeWithDefaultSpeed(
+      polyline,
+      boardingCum,
+      minutesToBoard,
+      minCum
+    );
   }
 
   const speedMPerMin = clampSpeed(rawSpeed);
@@ -210,9 +451,9 @@ function placeFromSegments(segments, polyline, boardingCum, minutesToBoard) {
   let busCumDist = boardingCum - remainingDist;
 
   if (busCumDist <= 0) {
-    busCumDist = Math.max(0, near[0].upCum);
+    busCumDist = Math.max(minCum, near[0].upCum);
   } else {
-    busCumDist = Math.max(0, busCumDist);
+    busCumDist = Math.max(minCum, busCumDist);
   }
 
   busCumDist = Math.min(busCumDist, boardingCum);
@@ -228,17 +469,34 @@ function placeFromSegments(segments, polyline, boardingCum, minutesToBoard) {
   };
 }
 
+function attachTrackingMeta(result, boardingEta) {
+  return {
+    ...result,
+    snapshotMs: boardingEta?.snapshotMs ?? null,
+    receivedAtMs: boardingEta?.receivedAtMs ?? null,
+  };
+}
+
 /**
  * Derive bus position from live multi-stop ETAs on a road-snapped path.
  * OSRM road-snap and upstream ETA fetches run in parallel.
+ *
+ * @param {object} entry - watchlist entry
+ * @param {object} boardingEta - fetchEta result for boarding stop
+ * @param {{ denseUpstream?: boolean, refreshUpstream?: boolean }} [options]
  */
-export async function estimateBusPosition(entry, boardingEta) {
+export async function estimateBusPosition(
+  entry,
+  boardingEta,
+  { denseUpstream = false, refreshUpstream = false } = {}
+) {
   const first = boardingEta?.first;
   if (!first?.eta) {
     return emptyEstimate({ reason: "no-eta" });
   }
 
-  const minutesToBoard = minutesUntil(first.eta);
+  const nowMs = trackingNowMs(boardingEta);
+  const minutesToBoard = minutesUntil(first.eta, nowMs);
   if (minutesToBoard == null) {
     return emptyEstimate({ reason: "no-eta" });
   }
@@ -251,15 +509,18 @@ export async function estimateBusPosition(entry, boardingEta) {
       { seq: 0, stopId: entry.stopId },
     ]);
     const poly = buildPolyline(boardingOnly);
-    return {
-      polyline: poly,
-      routePolyline: poly,
-      boardingStop: boardingOnly[0] ?? null,
-      busLatLng: null,
-      busCumDist: null,
-      stops: boardingOnly,
-      reason: "stop-not-on-route",
-    };
+    return attachTrackingMeta(
+      {
+        polyline: poly,
+        routePolyline: poly,
+        boardingStop: boardingOnly[0] ?? null,
+        busLatLng: null,
+        busCumDist: null,
+        stops: boardingOnly,
+        reason: "stop-not-on-route",
+      },
+      boardingEta
+    );
   }
 
   const approachStops = routeStops.slice(0, boardingIndex + 1);
@@ -286,8 +547,10 @@ export async function estimateBusPosition(entry, boardingEta) {
   const needUpstream =
     boardingIndex > 0 && minutesToBoard > ARRIVING_THRESHOLD_MIN;
 
-  const upstreamSample = needUpstream
-    ? sampleUpstreamStops(routeStops, boardingIndex, UPSTREAM_ETA_SAMPLE_SIZE)
+  const upstreamStops = needUpstream
+    ? denseUpstream
+      ? routeStops.slice(0, boardingIndex)
+      : sampleUpstreamStops(routeStops, boardingIndex, UPSTREAM_ETA_SAMPLE_SIZE)
     : [];
 
   const [approachRoad, fullRoad, upstreamEtas] = await Promise.all([
@@ -295,13 +558,16 @@ export async function estimateBusPosition(entry, boardingEta) {
     roadSnapStopsChunked(allCoords),
     needUpstream
       ? Promise.all(
-          upstreamSample.map(async (rs) => {
+          upstreamStops.map(async (rs) => {
             try {
               const eta = await fetchEta(
                 entry.route,
                 rs.stopId,
                 entry.direction,
-                { useCache: true }
+                {
+                  useCache: !refreshUpstream,
+                  cacheTtlMs: UPSTREAM_ETA_CACHE_TTL_MS,
+                }
               );
               return { stopId: rs.stopId, seq: rs.seq, eta };
             } catch {
@@ -325,32 +591,83 @@ export async function estimateBusPosition(entry, boardingEta) {
     isBoarding: c.stopId === entry.stopId,
   }));
 
+  const base = {
+    polyline,
+    routePolyline,
+    boardingStop,
+    boardingCumDist: boardingCum,
+    stops,
+    minutesToBoard,
+    boardEtaMs: new Date(first.eta).getTime(),
+  };
+
   if (boardingIndex === 0) {
-    return {
-      polyline,
-      routePolyline,
-      boardingStop,
-      busLatLng: null,
-      busCumDist: null,
-      boardingCumDist: boardingCum,
-      stops,
-      reason: "seq-1",
-    };
+    return attachTrackingMeta(
+      {
+        ...base,
+        busLatLng: null,
+        busCumDist: null,
+        reason: "seq-1",
+      },
+      boardingEta
+    );
   }
 
   if (minutesToBoard <= ARRIVING_THRESHOLD_MIN) {
-    return {
+    return attachTrackingMeta(
+      {
+        ...base,
+        busLatLng: { lat: boardingStop.lat, lng: boardingStop.lng },
+        busCumDist: boardingCum,
+        reason: "arriving",
+        speedMPerMin: null,
+      },
+      boardingEta
+    );
+  }
+
+  const etaChain = buildEtaChain({
+    routeStops,
+    boardingIndex,
+    boardingStopId: entry.stopId,
+    upstreamEtas,
+    first,
+    polyline,
+    stopCoordsById,
+    boardingCum,
+  });
+
+  const minCum = passedStopFloor({
+    routeStops,
+    boardingIndex,
+    upstreamEtas,
+    first,
+    polyline,
+    stopCoordsById,
+  });
+
+  if (denseUpstream && etaChain.length >= 2) {
+    const segmentPlaced = placeFromEtaChain(
+      etaChain,
       polyline,
-      routePolyline,
-      boardingStop,
-      busLatLng: { lat: boardingStop.lat, lng: boardingStop.lng },
-      busCumDist: boardingCum,
-      boardingCumDist: boardingCum,
-      stops,
-      reason: "arriving",
-      speedMPerMin: null,
-      minutesToBoard,
-    };
+      nowMs,
+      boardingCum,
+      minCum
+    );
+    if (segmentPlaced?.busLatLng) {
+      return attachTrackingMeta(
+        {
+          ...base,
+          busLatLng: segmentPlaced.busLatLng,
+          busCumDist: segmentPlaced.busCumDist,
+          minCumDist: minCum,
+          reason: segmentPlaced.reason,
+          speedMPerMin: segmentPlaced.speedMPerMin,
+          etaChain: segmentPlaced.etaChain,
+        },
+        boardingEta
+      );
+    }
   }
 
   const boardTime = new Date(first.eta).getTime();
@@ -387,19 +704,25 @@ export async function estimateBusPosition(entry, boardingEta) {
 
   const placed =
     segments.length === 0
-      ? placeWithDefaultSpeed(polyline, boardingCum, minutesToBoard)
-      : placeFromSegments(segments, polyline, boardingCum, minutesToBoard);
+      ? placeWithDefaultSpeed(polyline, boardingCum, minutesToBoard, minCum)
+      : placeFromSegments(
+          segments,
+          polyline,
+          boardingCum,
+          minutesToBoard,
+          minCum
+        );
 
-  return {
-    polyline,
-    routePolyline,
-    boardingStop,
-    busLatLng: placed.busLatLng,
-    busCumDist: placed.busCumDist,
-    boardingCumDist: boardingCum,
-    stops,
-    reason: placed.reason,
-    speedMPerMin: placed.speedMPerMin,
-    minutesToBoard,
-  };
+  return attachTrackingMeta(
+    {
+      ...base,
+      busLatLng: placed.busLatLng,
+      busCumDist: placed.busCumDist,
+      minCumDist: minCum,
+      reason: placed.reason,
+      speedMPerMin: placed.speedMPerMin,
+      etaChain: etaChain.length >= 2 ? etaChain : null,
+    },
+    boardingEta
+  );
 }

@@ -1,0 +1,35 @@
+---
+description: Definition of done — update PRD and rules when shipping features
+alwaysApply: true
+---
+
+# Ship checklist (mandatory)
+
+When you **complete** a feature, bug fix with user-visible behavior, or convention change, update docs **in the same turn** — do not wait for the user to ask.
+
+## Always
+
+1. **`docs/PRD.md`**
+   - Move shipped item from backlog → **Current behavior** (or check off)
+   - Update constraints if defaults changed (`js/config.js`)
+   - Add to **Non-goals** if you explicitly rejected an approach
+
+2. **Relevant `.cursor/rules/*.mdc`** — see mapping below
+
+## Mapping: what changed → what to update
+
+| Change type | Update |
+|-------------|--------|
+| User-visible behavior | `docs/PRD.md` + `README.md` if summary is stale |
+| New/changed JS module, pattern, or API boundary | `.cursor/rules/javascript.mdc` |
+| New UI block, BEM class, or theme token | `.cursor/rules/styles.mdc` |
+| Product scope, constraint, or non-goal | `.cursor/rules/product.mdc` |
+| Doc structure or split | `.cursor/rules/docs.mdc` |
+
+## Definition of done
+
+A feature is **not done** until PRD and affected rules reflect the new reality. Include doc updates in the same response as the code change.
+
+## Before starting
+
+Read `docs/PRD.md` backlog and non-goals. Do not build against non-goals without user approval.

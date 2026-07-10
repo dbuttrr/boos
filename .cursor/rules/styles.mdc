@@ -1,0 +1,46 @@
+---
+description: CSS and HTML UI conventions
+globs: css/**,index.html
+alwaysApply: false
+---
+
+# Styles & markup
+
+Plain CSS in `css/style.css` — no framework or preprocessor.
+
+## BEM
+
+Use `block__element--modifier`:
+
+```html
+<span class="row__eta row__eta--none"></span>
+<div class="focus-panel__map"></div>
+<div class="add-sheet__map"></div>
+```
+
+## Theming
+
+- Design tokens as CSS custom properties on `:root` and `[data-theme="dark"]`
+- Toggle theme via `data-theme` on `<html>`
+- Do not hardcode colors in CSS when a `--token` exists
+- Map route colors are the exception (`ROUTE_COLORS` in `map.js`)
+
+## Mobile & a11y
+
+- `viewport-fit=cover` for notched devices
+- Touch-friendly targets; `aria-live="polite"` on dynamic sections (`#cards`)
+- `role="button"` + keyboard (`Enter`/`Space`) for interactive rows
+- `aria-label` / `aria-pressed` on theme toggle
+- `aria-label` on floating `nav-dock`
+
+## New UI
+
+Add styles to `style.css` following existing glass/row/focus patterns. Keep light and dark variants in sync.
+
+Notable blocks: `row`, `focus-panel`, `add-sheet` (watchlist editor overlay + map; solid scrim, no backdrop blur; `add-sheet__suggestions` typeahead), `nav-dock` (bottom floating bar: add + theme), `theme-toggle`.
+
+`row__remove` is layout-collapsed (`width: 0`) until `row--editing` (long-press).
+
+## When shipping UI changes
+
+Update this file if you add a new BEM block, theme token, or a11y pattern. Also update `docs/PRD.md` per [workflow.mdc](workflow.mdc) — same turn, no prompt needed.
