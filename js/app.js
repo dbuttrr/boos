@@ -61,6 +61,7 @@ import { roadSnapStopsChunked } from "./routing.js";
 
 const cardsEl = document.getElementById("cards");
 const lastRefreshEl = document.getElementById("last-refresh");
+const nextRefreshEl = document.getElementById("next-refresh");
 const addSheetEl = document.getElementById("add-sheet");
 const addRouteInputEl = document.getElementById("add-route-input");
 const addRouteSuggestionsEl = document.getElementById("add-route-suggestions");
@@ -82,6 +83,8 @@ let watchlist = loadWatchlist();
 let watchlistIndex = buildWatchlistIndex(watchlist);
 
 let refreshTimer = null;
+let countdownTimer = null;
+let nextRefreshAt = 0;
 let isRefreshing = false;
 let focusedIds = [];
 let focusToken = 0;
@@ -1234,6 +1237,7 @@ async function refreshAll() {
   }
 
   lastRefreshEl.textContent = `Updated ${formatTime(new Date().toISOString())}`;
+  paintNextRefreshCountdown();
   isRefreshing = false;
 
   if (focusedIds.length > 0) {
@@ -1247,9 +1251,37 @@ async function refreshAll() {
   scheduleIdle(prefetchWatchlistGeometry);
 }
 
+function paintNextRefreshCountdown() {
+  if (!nextRefreshEl) return;
+  if (!nextRefreshAt) {
+    nextRefreshEl.hidden = true;
+    nextRefreshEl.textContent = "";
+    return;
+  }
+  const secs = Math.max(0, Math.ceil((nextRefreshAt - Date.now()) / 1000));
+  nextRefreshEl.hidden = false;
+  nextRefreshEl.textContent = secs === 0 ? "refreshing…" : `next ${secs}s`;
+}
+
+function startCountdownTick() {
+  if (countdownTimer) clearInterval(countdownTimer);
+  paintNextRefreshCountdown();
+  countdownTimer = setInterval(paintNextRefreshCountdown, 250);
+}
+
+function scheduleNextRefreshAt(fromMs = Date.now()) {
+  nextRefreshAt = fromMs + REFRESH_INTERVAL_MS;
+  paintNextRefreshCountdown();
+}
+
 function startAutoRefresh() {
   if (refreshTimer) clearInterval(refreshTimer);
-  refreshTimer = setInterval(refreshAll, REFRESH_INTERVAL_MS);
+  scheduleNextRefreshAt();
+  startCountdownTick();
+  refreshTimer = setInterval(() => {
+    scheduleNextRefreshAt();
+    refreshAll();
+  }, REFRESH_INTERVAL_MS);
 }
 
 function setAddError(message) {

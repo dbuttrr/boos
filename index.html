@@ -83,7 +83,10 @@
         </button>
       </div>
       <div class="watch-sheet">
-        <p class="watch-sheet__status" id="last-refresh">Loading…</p>
+        <p class="watch-sheet__status">
+          <span id="last-refresh">Loading…</span>
+          <span class="watch-sheet__countdown" id="next-refresh" hidden></span>
+        </p>
         <section class="cards" id="cards" aria-live="polite"></section>
       </div>
       <div id="add-sheet" class="add-sheet" hidden aria-modal="true" role="dialog" aria-labelledby="add-sheet-title">
