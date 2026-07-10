@@ -45,7 +45,7 @@ Personal use: mobile, Hong Kong, checking ETAs before leaving home or office.
 
 ### Focus map
 
-- Full-bleed Leaflet map fills the viewport; watchlist sits in a more transparent liquid-glass sheet (`.watch-sheet`, `--watch-sheet-glass`) over the bottom half. Last-updated time sits at the top of the sheet with a “next Ns” countdown to auto-refresh.
+- Full-bleed Leaflet map fills the viewport; watchlist sits in a more transparent liquid-glass sheet (`.watch-sheet`, `--watch-sheet-glass`) over the bottom half, flush to the screen bottom (top corners only rounded; safe-area via `padding-bottom` so no map gap under the sheet on home-screen). Last-updated time sits at the top of the sheet with a “next Ns” countdown to auto-refresh.
 - Idle (no row selected): Maps/Uber-style GPS follow — the you marker always tracks GPS, but the map recenters into the **top-half** active area only when you leave a soft follow window (`IDLE_FOLLOW_WINDOW` in `config.js`). Falls back to `LOCATION` in `config.js` until a fix arrives. You marker is slightly larger (36px hit area) for glanceability.
 - Tap a row to focus (tap again to deselect): map auto-fits your location, the boarding stop(s), and the estimated bus(es) into the top-half active area (asymmetric `fitBounds` padding / pan offset so the glass sheet does not cover framed markers) — deferred until layout settles so Leaflet has a real size. Each focused boarding stop shows a simple glass name bubble above the pin; text after the first comma wraps to a second, quieter line; if several focused routes share the same stop, only one label is shown.
 - Any number of routes can be focused at once; row/map colors cycle through a 6-color `ROUTE_COLORS` palette (blue, yellow, green, coral, violet, teal).
@@ -74,6 +74,7 @@ Personal use: mobile, Hong Kong, checking ETAs before leaving home or office.
 - Light/dark mode via a vertical sun/moon control in the map top-right (replaces the old zoom +/- slot); auto-schedules by Hong Kong sunrise/sunset when no manual preference saved. The centered **+** / clear **×** stays above the watch-sheet.
 - Dark mode keeps a quieter top-left glass highlight (`--focus-glass-highlight`, `--glass-sheen`) so the watch-sheet and rows don’t look overly shiny.
 - Map tiles and row focus colors follow theme.
+- Home-screen / tab icon: blue bus matching the map marker (route color A) on light `#eef1f6` (`favicon.svg`, `favicon-32.png`, `apple-touch-icon.png`).
 
 ### Data & caching
 

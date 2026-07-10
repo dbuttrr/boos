@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Bus">
+  <!-- Matches in-app .focus-marker__bus (route color A) -->
+  <rect width="32" height="32" rx="7" fill="#eef1f6"/>
+  <defs>
+    <linearGradient id="bus" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#58a6ff"/>
+      <stop offset="100%" stop-color="#0969da"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(16 15.2)">
+    <rect
+      x="-9"
+      y="-7"
+      width="18"
+      height="12.5"
+      rx="3.2"
+      ry="3.2"
+      fill="url(#bus)"
+      stroke="#ffffff"
+      stroke-width="2.2"
+    />
+    <rect x="-7.2" y="2.6" width="14.4" height="1.6" rx="0.6" fill="rgba(0,0,0,0.12)"/>
+    <circle cx="-5.2" cy="7.1" r="2.35" fill="#1f2328" stroke="#ffffff" stroke-width="1.2"/>
+    <circle cx="5.2" cy="7.1" r="2.35" fill="#1f2328" stroke="#ffffff" stroke-width="1.2"/>
+  </g>
+</svg>
