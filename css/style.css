@@ -39,9 +39,9 @@ html {
   --row-glass-focused: rgba(255, 255, 255, 0.62);
   --row-focused-glow: 0 8px 24px rgba(9, 105, 218, 0.12);
   --glass-sheen: rgba(255, 255, 255, 0.22);
-  --radius-watch-sheet: 2.25rem;
-  --radius-row: 1.5rem;
-  --radius-row-delete: 1.25rem;
+  --radius-watch-sheet: 2.5rem;
+  --radius-row: 1.625rem;
+  --radius-row-delete: 1.375rem;
   --focus-you: #0969da;
   --focus-bus: #0969da;
   --focus-bus-top: #58a6ff;
