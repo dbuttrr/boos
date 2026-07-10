@@ -61,6 +61,7 @@ import { roadSnapStopsChunked } from "./routing.js";
 
 const cardsEl = document.getElementById("cards");
 const lastRefreshEl = document.getElementById("last-refresh");
+const nextRefreshEl = document.getElementById("next-refresh");
 const addSheetEl = document.getElementById("add-sheet");
 const addRouteInputEl = document.getElementById("add-route-input");
 const addRouteSuggestionsEl = document.getElementById("add-route-suggestions");
@@ -74,12 +75,16 @@ const addSelectionLabelEl = document.getElementById("add-selection-label");
 const addConfirmBtnEl = document.getElementById("add-confirm-btn");
 const addMapEl = document.getElementById("add-map");
 const SORT_DEBOUNCE_MS = 2_000;
-const LONG_PRESS_MS = 500;
+const SWIPE_ACTION_WIDTH = 76;
+const SWIPE_AXIS_THRESHOLD = 12;
+const SWIPE_OPEN_RATIO = 0.4;
 
 let watchlist = loadWatchlist();
 let watchlistIndex = buildWatchlistIndex(watchlist);
 
 let refreshTimer = null;
+let countdownTimer = null;
+let nextRefreshAt = 0;
 let isRefreshing = false;
 let focusedIds = [];
 let focusToken = 0;
@@ -102,8 +107,9 @@ let addState = {
   selectedStop: null,
   loadToken: 0,
 };
-let longPressTimer = null;
-let longPressRowId = null;
+let swipeState = null;
+let openSwipeRow = null;
+let suppressRowClick = false;
 
 function buildWatchlistIndex(entries) {
   return new Map(entries.map((entry, i) => [entry.id, i]));
@@ -120,12 +126,16 @@ function createRowElement(entry) {
   row.setAttribute("role", "button");
   row.tabIndex = 0;
   row.innerHTML = `
-    <button type="button" class="row__remove" aria-label="Remove route">×</button>
-    <div class="row__main">
-      <div class="row__route"></div>
-      <div class="row__times">
-        <span class="row__eta"></span>
-        <span class="row__next"></span>
+    <div class="row__actions">
+      <button type="button" class="row__delete">Delete</button>
+    </div>
+    <div class="row__slide">
+      <div class="row__main">
+        <div class="row__route"></div>
+        <div class="row__times">
+          <span class="row__eta"></span>
+          <span class="row__next"></span>
+        </div>
       </div>
     </div>
   `;
@@ -338,7 +348,7 @@ function setFocusedRows(ids) {
       `0 8px ${dark ? 28 : 24}px ${hexToRgba(hex, alpha.glow)}`
     );
   });
-  syncDockClearButton(ids.length > 0);
+  syncDockClearButton(ids.length > 1);
 }
 
 function syncDockClearButton(clearMode) {
@@ -386,6 +396,43 @@ function startBusReposition(estimate, toCum) {
   estimate.repositionToCum = toCum;
   estimate.repositionStartedAt = performance.now();
   return true;
+}
+
+/**
+ * Mark the bus as arriving and ease along the polyline onto the boarding stop
+ * instead of teleporting. Returns true while a reposition animation is running.
+ */
+function beginArriveAtStop(estimate) {
+  if (!estimate) return false;
+  const stop = estimate.boardingStop;
+  const boardingCum =
+    estimate.boardingCumDist ??
+    stop?.cumDist ??
+    estimate.polyline?.[estimate.polyline.length - 1]?.cumDist;
+
+  estimate.reason = "arriving";
+  estimate.speedMPerMin = null;
+
+  if (!stop || boardingCum == null) return false;
+
+  // Already easing toward the boarding stop.
+  if (
+    estimate.repositionStartedAt != null &&
+    estimate.repositionToCum != null &&
+    Math.abs(estimate.repositionToCum - boardingCum) < BUS_REPOSITION_MIN_M
+  ) {
+    return true;
+  }
+
+  if (estimate.busCumDist != null && estimate.polyline?.length) {
+    if (startBusReposition(estimate, boardingCum)) return true;
+  }
+
+  clearBusReposition(estimate);
+  estimate.busCumDist = boardingCum;
+  estimate.busLatLng = { lat: stop.lat, lng: stop.lng };
+  bumpProgressHighWater(estimate);
+  return false;
 }
 
 function easeOutCubic(t) {
@@ -462,13 +509,23 @@ function startBusAnimations(estimatesById, token = focusToken) {
   const tracks = [];
   for (const [id, estimate] of estimatesById) {
     if (!estimate?.polyline?.length || estimate.busCumDist == null) continue;
-    if (estimate.reason === "arriving" || estimate.reason === "seq-1") continue;
+    if (estimate.reason === "seq-1") continue;
 
     const polyline = estimate.polyline;
     const boardingCum =
       estimate.boardingCumDist ??
       estimate.boardingStop?.cumDist ??
       polyline[polyline.length - 1].cumDist;
+
+    // Keep animating arriving buses until they finish easing onto the stop.
+    if (estimate.reason === "arriving") {
+      const atStop =
+        estimate.repositionStartedAt == null &&
+        Math.abs(estimate.busCumDist - boardingCum) < BUS_REPOSITION_MIN_M;
+      if (atStop) continue;
+      tracks.push({ id, mode: "arrive", estimate, boardingCum });
+      continue;
+    }
 
     if (estimate.etaChain?.length >= 2) {
       tracks.push({ id, mode: "segment", estimate, boardingCum });
@@ -522,20 +579,39 @@ function startBusAnimations(estimatesById, token = focusToken) {
         continue;
       }
 
-      // Match full-estimate arriving snap — do not keep interpolating from a
-      // stale origin ETA once boarding is under ARRIVING_THRESHOLD_MIN.
+      // Ease into the stop when under the arriving threshold (or already arriving).
       if (
+        track.mode === "arrive" ||
         minsLeft <= ARRIVING_THRESHOLD_MIN ||
         estimate.reason === "arriving"
       ) {
-        clearBusReposition(estimate);
         const stop = estimate.boardingStop;
-        if (stop) {
-          estimate.reason = "arriving";
-          estimate.busCumDist = boardingCum;
-          estimate.busLatLng = { lat: stop.lat, lng: stop.lng };
-          bumpProgressHighWater(estimate);
-          updateBusMarker(track.id, { lat: stop.lat, lng: stop.lng });
+        const animating = beginArriveAtStop(estimate);
+        if (animating) {
+          const repositionPoint = tickBusReposition(estimate);
+          if (repositionPoint) {
+            estimate.busCumDist = repositionPoint.cumDist;
+            estimate.busLatLng = {
+              lat: repositionPoint.lat,
+              lng: repositionPoint.lng,
+            };
+            bumpProgressHighWater(estimate);
+            updateBusMarker(track.id, {
+              lat: repositionPoint.lat,
+              lng: repositionPoint.lng,
+            });
+            keepRunning = true;
+          } else if (stop) {
+            estimate.busCumDist = boardingCum;
+            estimate.busLatLng = { lat: stop.lat, lng: stop.lng };
+            bumpProgressHighWater(estimate);
+            updateBusMarker(track.id, { lat: stop.lat, lng: stop.lng });
+          }
+        } else if (stop && estimate.busLatLng) {
+          updateBusMarker(track.id, {
+            lat: estimate.busLatLng.lat,
+            lng: estimate.busLatLng.lng,
+          });
         }
         continue;
       }
@@ -640,19 +716,14 @@ function applyLightweightFocusEtaUpdate(results) {
     }
 
     if (minsLeft <= ARRIVING_THRESHOLD_MIN) {
-      clearBusReposition(estimate);
       const stop = estimate.boardingStop;
-      const boardingCum =
-        estimate.boardingCumDist ??
-        stop?.cumDist ??
-        estimate.polyline?.[estimate.polyline.length - 1]?.cumDist;
-      if (stop && boardingCum != null) {
-        estimate.reason = "arriving";
-        estimate.busCumDist = boardingCum;
-        estimate.busLatLng = { lat: stop.lat, lng: stop.lng };
-        estimate.speedMPerMin = null;
-        bumpProgressHighWater(estimate);
-        updateBusMarker(id, { lat: stop.lat, lng: stop.lng });
+      if (beginArriveAtStop(estimate)) {
+        startedReposition = true;
+      } else if (stop && estimate.busLatLng) {
+        updateBusMarker(id, {
+          lat: estimate.busLatLng.lat,
+          lng: estimate.busLatLng.lng,
+        });
       }
       continue;
     }
@@ -724,7 +795,14 @@ async function loadEstimateForEntry(entry) {
     });
     return {
       ...estimate,
-      boardingStop: estimate.boardingStop ?? boardingStop,
+      boardingStop: estimate.boardingStop
+        ? {
+            ...boardingStop,
+            ...estimate.boardingStop,
+            nameEn:
+              estimate.boardingStop.nameEn || boardingStop?.nameEn || undefined,
+          }
+        : boardingStop,
     };
   } catch (err) {
     console.warn("Focus estimate failed:", err);
@@ -1159,6 +1237,7 @@ async function refreshAll() {
   }
 
   lastRefreshEl.textContent = `Updated ${formatTime(new Date().toISOString())}`;
+  paintNextRefreshCountdown();
   isRefreshing = false;
 
   if (focusedIds.length > 0) {
@@ -1172,9 +1251,37 @@ async function refreshAll() {
   scheduleIdle(prefetchWatchlistGeometry);
 }
 
+function paintNextRefreshCountdown() {
+  if (!nextRefreshEl) return;
+  if (!nextRefreshAt) {
+    nextRefreshEl.hidden = true;
+    nextRefreshEl.textContent = "";
+    return;
+  }
+  const secs = Math.max(0, Math.ceil((nextRefreshAt - Date.now()) / 1000));
+  nextRefreshEl.hidden = false;
+  nextRefreshEl.textContent = secs === 0 ? "refreshing…" : `next ${secs}s`;
+}
+
+function startCountdownTick() {
+  if (countdownTimer) clearInterval(countdownTimer);
+  paintNextRefreshCountdown();
+  countdownTimer = setInterval(paintNextRefreshCountdown, 250);
+}
+
+function scheduleNextRefreshAt(fromMs = Date.now()) {
+  nextRefreshAt = fromMs + REFRESH_INTERVAL_MS;
+  paintNextRefreshCountdown();
+}
+
 function startAutoRefresh() {
   if (refreshTimer) clearInterval(refreshTimer);
-  refreshTimer = setInterval(refreshAll, REFRESH_INTERVAL_MS);
+  scheduleNextRefreshAt();
+  startCountdownTick();
+  refreshTimer = setInterval(() => {
+    scheduleNextRefreshAt();
+    refreshAll();
+  }, REFRESH_INTERVAL_MS);
 }
 
 function setAddError(message) {
@@ -1275,6 +1382,7 @@ async function showAddMapPreview() {
 }
 
 async function openAddSheet() {
+  closeAllSwipeRows();
   if (isFocusPanelVisible()) {
     exitFocus();
   }
@@ -1477,24 +1585,71 @@ function confirmRemoveEntry(id) {
   }
 }
 
-function enterRowEditMode() {
-  cardsEl.querySelectorAll(".row").forEach((row) => {
-    row.classList.add("row--editing");
-  });
+function setRowSwipeX(row, x) {
+  if (!row) return;
+  const clamped = Math.max(-SWIPE_ACTION_WIDTH, Math.min(0, x));
+  const progress = Math.min(1, Math.abs(clamped) / SWIPE_ACTION_WIDTH);
+  row.style.setProperty("--row-swipe-x", `${clamped}px`);
+  row.style.setProperty("--row-swipe-progress", String(progress));
+  return clamped;
 }
 
-function exitRowEditMode() {
-  cardsEl.querySelectorAll(".row--editing").forEach((row) => {
-    row.classList.remove("row--editing");
-  });
+function clearRowSwipeProps(row) {
+  row.style.removeProperty("--row-swipe-x");
+  row.style.removeProperty("--row-swipe-progress");
 }
 
-function clearLongPress() {
-  if (longPressTimer) {
-    clearTimeout(longPressTimer);
-    longPressTimer = null;
+function closeSwipeRow(row) {
+  if (!row) return;
+  const slide = row.querySelector(".row__slide");
+  const wasOpen =
+    row.classList.contains("row--swipe-open") ||
+    row.classList.contains("row--swiping");
+
+  row.classList.remove("row--swiping");
+  if (openSwipeRow === row) openSwipeRow = null;
+
+  if (!wasOpen) {
+    row.classList.remove("row--swipe-open");
+    clearRowSwipeProps(row);
+    return;
   }
-  longPressRowId = null;
+
+  // Keep swipe-open so transform still applies while we animate back to 0,
+  // then drop transform entirely so backdrop-filter matches main again.
+  row.classList.add("row--swipe-open");
+  setRowSwipeX(row, 0);
+
+  let finished = false;
+  const finish = () => {
+    if (finished) return;
+    finished = true;
+    row.classList.remove("row--swipe-open", "row--swiping");
+    clearRowSwipeProps(row);
+    slide?.removeEventListener("transitionend", onEnd);
+  };
+  const onEnd = (event) => {
+    if (event.target !== slide || event.propertyName !== "transform") return;
+    finish();
+  };
+  slide?.addEventListener("transitionend", onEnd);
+  setTimeout(finish, 280);
+}
+
+function openRowSwipe(row) {
+  if (!row) return;
+  if (openSwipeRow && openSwipeRow !== row) closeSwipeRow(openSwipeRow);
+  row.classList.remove("row--swiping");
+  row.classList.add("row--swipe-open");
+  setRowSwipeX(row, -SWIPE_ACTION_WIDTH);
+  openSwipeRow = row;
+}
+
+function closeAllSwipeRows() {
+  cardsEl
+    .querySelectorAll(".row--swipe-open, .row--swiping")
+    .forEach((row) => closeSwipeRow(row));
+  openSwipeRow = null;
 }
 
 ensureRows();
@@ -1537,7 +1692,7 @@ document.addEventListener("themechange", () => {
 
 document.getElementById("add-route-btn")?.addEventListener("click", (event) => {
   event.stopPropagation();
-  if (focusedIds.length > 0) {
+  if (focusedIds.length > 1) {
     exitFocus();
     return;
   }
@@ -1604,22 +1759,34 @@ addSheetEl?.addEventListener("click", (event) => {
 });
 
 cardsEl.addEventListener("click", (event) => {
-  const removeBtn = event.target.closest(".row__remove");
-  if (removeBtn) {
+  const deleteBtn = event.target.closest(".row__delete");
+  if (deleteBtn) {
     event.stopPropagation();
-    const row = removeBtn.closest(".row");
+    const row = deleteBtn.closest(".row");
     if (row) confirmRemoveEntry(row.dataset.id);
-    exitRowEditMode();
+    closeAllSwipeRows();
     return;
   }
 
   const row = event.target.closest(".row");
   if (!row) return;
-  if (row.classList.contains("row--editing")) {
-    event.stopPropagation();
+  event.stopPropagation();
+
+  if (suppressRowClick) {
+    suppressRowClick = false;
     return;
   }
-  event.stopPropagation();
+
+  // Tap an open swipe to close instead of toggling focus.
+  if (row.classList.contains("row--swipe-open")) {
+    closeSwipeRow(row);
+    return;
+  }
+
+  if (openSwipeRow && openSwipeRow !== row) {
+    closeSwipeRow(openSwipeRow);
+  }
+
   toggleFocus(row.dataset.id);
 });
 
@@ -1628,26 +1795,110 @@ cardsEl.addEventListener("keydown", (event) => {
   const row = event.target.closest(".row");
   if (!row) return;
   event.preventDefault();
+  closeAllSwipeRows();
   toggleFocus(row.dataset.id);
 });
 
 cardsEl.addEventListener("pointerdown", (event) => {
+  if (event.pointerType === "mouse" && event.button !== 0) return;
+  if (isAddSheetOpen()) return;
+
+  const deleteBtn = event.target.closest(".row__delete");
+  if (deleteBtn) return;
+
   const row = event.target.closest(".row");
-  if (!row || event.target.closest(".row__remove")) return;
+  if (!row) return;
 
-  clearLongPress();
-  longPressRowId = row.dataset.id;
-  longPressTimer = setTimeout(() => {
-    longPressTimer = null;
-    enterRowEditMode();
-  }, LONG_PRESS_MS);
+  const startX = event.clientX;
+  const startY = event.clientY;
+  const opened = row.classList.contains("row--swipe-open");
+  const startTx = opened ? -SWIPE_ACTION_WIDTH : 0;
+
+  if (openSwipeRow && openSwipeRow !== row) {
+    closeSwipeRow(openSwipeRow);
+  }
+
+  swipeState = {
+    row,
+    pointerId: event.pointerId,
+    startX,
+    startY,
+    startTx,
+    axis: null,
+    dragged: false,
+  };
 });
 
-cardsEl.addEventListener("pointerup", clearLongPress);
-cardsEl.addEventListener("pointercancel", clearLongPress);
-cardsEl.addEventListener("pointerleave", (event) => {
-  if (event.target.closest(".row")) clearLongPress();
+cardsEl.addEventListener("pointermove", (event) => {
+  const state = swipeState;
+  if (!state || event.pointerId !== state.pointerId) return;
+
+  const dx = event.clientX - state.startX;
+  const dy = event.clientY - state.startY;
+
+  if (!state.axis) {
+    if (
+      Math.abs(dx) < SWIPE_AXIS_THRESHOLD &&
+      Math.abs(dy) < SWIPE_AXIS_THRESHOLD
+    ) {
+      return;
+    }
+    if (Math.abs(dx) > Math.abs(dy)) {
+      state.axis = "x";
+      state.row.classList.add("row--swiping");
+      state.row.classList.remove("row--swipe-open");
+      try {
+        state.row.setPointerCapture(event.pointerId);
+      } catch {
+        // ignore
+      }
+    } else {
+      state.axis = "y";
+      swipeState = null;
+      return;
+    }
+  }
+
+  if (state.axis !== "x") return;
+
+  event.preventDefault();
+  state.dragged = true;
+  suppressRowClick = true;
+  state.lastX = setRowSwipeX(state.row, state.startTx + dx);
 });
+
+function endSwipe(event) {
+  const state = swipeState;
+  if (!state || (event && event.pointerId !== state.pointerId)) return;
+  swipeState = null;
+
+  const row = state.row;
+  row.classList.remove("row--swiping");
+
+  if (state.axis !== "x") {
+    if (!state.dragged) suppressRowClick = false;
+    return;
+  }
+
+  const currentX = state.lastX ?? state.startTx;
+  const shouldOpen = currentX <= -SWIPE_ACTION_WIDTH * SWIPE_OPEN_RATIO;
+
+  if (shouldOpen) {
+    openRowSwipe(row);
+  } else {
+    closeSwipeRow(row);
+  }
+
+  if (state.dragged) {
+    suppressRowClick = true;
+    setTimeout(() => {
+      suppressRowClick = false;
+    }, 0);
+  }
+}
+
+cardsEl.addEventListener("pointerup", endSwipe);
+cardsEl.addEventListener("pointercancel", endSwipe);
 
 document.getElementById("map-stage")?.addEventListener("click", (event) => {
   event.stopPropagation();
@@ -1658,9 +1909,9 @@ document.getElementById("theme-toggle")?.addEventListener("click", (event) => {
 });
 
 document.getElementById("app").addEventListener("click", (event) => {
-  if (event.target.closest(".row--editing")) return;
-
-  exitRowEditMode();
+  if (!event.target.closest(".row")) {
+    closeAllSwipeRows();
+  }
 
   if (
     event.target.closest(".row") ||

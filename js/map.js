@@ -1,4 +1,4 @@
-import { BUS_MARKER_LERP, LOCATION } from "./config.js";
+import { BUS_MARKER_LERP, IDLE_FOLLOW_WINDOW, LOCATION } from "./config.js";
 
 let map = null;
 let tileLayer = null;
@@ -154,19 +154,80 @@ export function youIcon() {
   return L.divIcon({
     className: "focus-marker focus-marker--you",
     html: `<span class="focus-marker__you"><span class="focus-marker__pulse"></span><span class="focus-marker__you-dot"></span></span>`,
-    iconSize: [28, 28],
-    iconAnchor: [14, 14],
+    iconSize: [36, 36],
+    iconAnchor: [18, 18],
   });
 }
 
-export function stopIcon({ selected = false } = {}) {
+function escapeHtml(text) {
+  return String(text)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+/**
+ * Split "Name, District" style stop titles onto two lines (text after the
+ * first comma becomes the secondary line). No comma → single line.
+ */
+function formatStopLabelHtml(name) {
+  const comma = name.indexOf(",");
+  if (comma < 0) {
+    return `<span class="focus-marker__stop-label-text">${escapeHtml(name)}</span>`;
+  }
+  const primary = name.slice(0, comma).trim();
+  const secondary = name.slice(comma + 1).trim();
+  if (!primary || !secondary) {
+    return `<span class="focus-marker__stop-label-text">${escapeHtml(name)}</span>`;
+  }
+  return `<span class="focus-marker__stop-label-text">${escapeHtml(primary)}</span><span class="focus-marker__stop-label-sub">${escapeHtml(secondary)}</span>`;
+}
+
+/** Wide icon box so a glass name label can sit above the pin tip. */
+const STOP_LABEL_ICON_W = 168;
+const STOP_LABEL_ICON_H = 58;
+const STOP_LABEL_ICON_H_TWO_LINE = 72;
+
+/**
+ * Boarding / picker stop pin.
+ * Pass `label` in focus mode to show a glass name tooltip above the pin.
+ */
+export function stopIcon({
+  selected = false,
+  label = "",
+  colorIndex = 0,
+} = {}) {
   const L = window.L;
-  const modifier = selected ? " focus-marker--stop-selected" : "";
+  const name = typeof label === "string" ? label.trim() : "";
+  const hasLabel = Boolean(name);
+  const twoLine =
+    hasLabel &&
+    name.includes(",") &&
+    name.slice(0, name.indexOf(",")).trim() &&
+    name.slice(name.indexOf(",") + 1).trim();
+  const selectedMod = selected || hasLabel ? " focus-marker--stop-selected" : "";
+  const labeledMod = hasLabel ? " focus-marker--stop-labeled" : "";
+  const twoLineMod = twoLine ? " focus-marker--stop-labeled-2" : "";
+  const palette = ROUTE_COLORS[colorIndex] ?? ROUTE_COLORS[0];
+  const accent = getAppTheme() === "dark" ? palette.dark : palette.light;
+
+  const labelHtml = hasLabel
+    ? `<span class="focus-marker__stop-label">${formatStopLabelHtml(name)}</span>`
+    : "";
+
+  const width = hasLabel ? STOP_LABEL_ICON_W : 22;
+  const height = hasLabel
+    ? twoLine
+      ? STOP_LABEL_ICON_H_TWO_LINE
+      : STOP_LABEL_ICON_H
+    : 30;
+
   return L.divIcon({
-    className: `focus-marker focus-marker--stop${modifier}`,
-    html: `<span class="focus-marker__stop" aria-hidden="true"><span class="focus-marker__stop-head"></span><span class="focus-marker__stop-stem"></span></span>`,
-    iconSize: [22, 30],
-    iconAnchor: [11, 28],
+    className: `focus-marker focus-marker--stop${selectedMod}${labeledMod}${twoLineMod}`,
+    html: `<span class="focus-marker__stop-wrap"${hasLabel || selected ? ` style="--stop-label-accent:${accent}"` : ""}>${labelHtml}<span class="focus-marker__stop" aria-hidden="true"><span class="focus-marker__stop-head"></span><span class="focus-marker__stop-stem"></span></span></span>`,
+    iconSize: [width, height],
+    iconAnchor: [width / 2, height - 2],
   });
 }
 
@@ -245,21 +306,45 @@ function activeAreaPadding() {
   const size = map.getSize();
   const bottomInset = Math.round(size.y * 0.5);
   return {
-    paddingTopLeft: [40, 48],
+    // Extra top room for boarding-stop name labels above pins (incl. two-line).
+    paddingTopLeft: [40, 84],
     paddingBottomRight: [40, bottomInset + 16],
   };
 }
 
 /**
  * Place a latlng at the center of the top half (not the full viewport center).
- * setView centers on the container midpoint; panBy shifts the point up into the active area.
+ * Computes a single target center so setView can animate smoothly (no snap + panBy).
  */
 function centerInActiveArea(latlng, zoom = IDLE_ZOOM, { animate = true } = {}) {
   if (!map || !latlng) return;
   map.invalidateSize({ animate: false });
-  map.setView([latlng.lat, latlng.lng], zoom, { animate: false });
+  const z = zoom ?? map.getZoom() ?? IDLE_ZOOM;
   const size = map.getSize();
-  map.panBy([0, size.y / 4], { animate });
+  if (size.x === 0 || size.y === 0) {
+    map.setView([latlng.lat, latlng.lng], z, { animate: false });
+    return;
+  }
+  // setView centers on the container midpoint; offset south so latlng sits at y = size.y/4.
+  const point = map.project([latlng.lat, latlng.lng], z);
+  const target = map.unproject(point.add([0, size.y / 4]), z);
+  map.setView(target, z, { animate });
+}
+
+/**
+ * True while `latlng` is inside the soft follow window around the top-half center.
+ * Used for Maps/Uber-style idle follow (marker moves; camera only when you leave).
+ */
+function isYouInFollowWindow(latlng) {
+  if (!map || !latlng) return false;
+  const size = map.getSize();
+  if (size.x === 0 || size.y === 0) return false;
+  const pt = map.latLngToContainerPoint([latlng.lat, latlng.lng]);
+  const cx = size.x / 2;
+  const cy = size.y / 4;
+  const halfW = (size.x / 2) * IDLE_FOLLOW_WINDOW;
+  const halfH = (size.y / 4) * IDLE_FOLLOW_WINDOW;
+  return Math.abs(pt.x - cx) <= halfW && Math.abs(pt.y - cy) <= halfH;
 }
 
 async function ensureMap() {
@@ -275,12 +360,6 @@ async function ensureMap() {
   });
 
   map.attributionControl.setPrefix(false);
-
-  L.control
-    .zoom({
-      position: "topright",
-    })
-    .addTo(map);
 
   applyTileTheme(getAppTheme());
   watchTheme();
@@ -558,19 +637,23 @@ function scheduleFitToMarkers({ includeYou = true, animate = true } = {}) {
 }
 
 /**
- * Idle GPS follow: keep you centered in the top-half active area.
- * No-ops while a route is focused.
+ * Idle GPS follow (Maps/Uber-style): always move the you marker; recenter into
+ * the top-half active area only when you leave the soft follow window (or on
+ * first fix / force). No-ops while a route is focused.
  */
 export function followYouInActiveArea(
   youLatLng,
-  { animate = true, showMarker = true } = {}
+  { animate = true, showMarker = true, force = false } = {}
 ) {
   if (!map || !youLatLng || focusActive || !idleFollow) return;
+  const isNew = !youMarker;
   if (showMarker) ensureYouMarker(youLatLng);
-  centerInActiveArea(youLatLng, map.getZoom() || IDLE_ZOOM, { animate });
+  if (force || isNew || !isYouInFollowWindow(youLatLng)) {
+    centerInActiveArea(youLatLng, map.getZoom() || IDLE_ZOOM, { animate });
+  }
 }
 
-function paintRoute(route, theme, { dual = false } = {}) {
+function paintRoute(route, theme, { dual = false, showStopLabel = true } = {}) {
   const L = window.L;
   const colorIndex = route.colorIndex ?? 0;
   const boardingStop = route.boardingStop;
@@ -579,6 +662,8 @@ function paintRoute(route, theme, { dual = false } = {}) {
   const routePolyline = route.routePolyline;
   const stops = route.stops ?? [];
   const busLatLng = route.busLatLng;
+  const stopName =
+    typeof boardingStop?.nameEn === "string" ? boardingStop.nameEn.trim() : "";
 
   const layer = {
     fullRouteLine: null,
@@ -622,10 +707,16 @@ function paintRoute(route, theme, { dual = false } = {}) {
   }
 
   if (boardingStop) {
+    const label = showStopLabel && stopName ? stopName : "";
     layer.stopMarker = L.marker([boardingStop.lat, boardingStop.lng], {
-      icon: stopIcon(),
-      title: boardingStop.nameEn || "Boarding stop",
-      zIndexOffset: 200,
+      icon: stopIcon({
+        selected: true,
+        label,
+        colorIndex,
+      }),
+      title: stopName || "Boarding stop",
+      zIndexOffset: label ? 280 : 200,
+      interactive: false,
     }).addTo(map);
   }
 
@@ -643,12 +734,14 @@ function paintRoute(route, theme, { dual = false } = {}) {
 /**
  * Paint one or more focused routes.
  * Always shows the you pin when youLatLng is provided; multi-select uses lower line opacity.
+ * Shared boarding stops only get one name label (first focused route wins).
  */
 function paintFocusRoutes(routes, { youLatLng = null, refit = true } = {}) {
   if (!map) return;
   const L = window.L;
   const theme = getAppTheme();
   const multi = routes.length >= 2;
+  const labeledStopIds = new Set();
 
   clearRouteOverlays();
   if (youMarker) {
@@ -658,7 +751,13 @@ function paintFocusRoutes(routes, { youLatLng = null, refit = true } = {}) {
 
   for (const route of routes) {
     if (!route?.id) continue;
-    routeLayers.set(route.id, paintRoute(route, theme, { dual: multi }));
+    const stopId = route.boardingStop?.stopId ?? route.boardingStop?.id;
+    const showStopLabel = Boolean(stopId) && !labeledStopIds.has(stopId);
+    if (showStopLabel) labeledStopIds.add(stopId);
+    routeLayers.set(
+      route.id,
+      paintRoute(route, theme, { dual: multi, showStopLabel })
+    );
   }
 
   if (youLatLng) {

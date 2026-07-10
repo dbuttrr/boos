@@ -21,11 +21,11 @@ Personal use: mobile, Hong Kong, checking ETAs before leaving home or office.
 
 ### Watchlist editing
 
-- Circular **+** (floating above the watch-sheet, no outer dock pill) opens add sheet: enter route → pick direction → tap stop on map. The sheet map is visible immediately (dimmed, non-interactive preview centered on you); choosing a direction undims it and enables stop picking. While routes are focused, the same control becomes clear-all **×** (scale pulse + slight red tint).
+- Circular **+** (floating above the watch-sheet, no outer dock pill) opens add sheet: enter route → pick direction → tap stop on map. The sheet map is visible immediately (dimmed, non-interactive preview centered on you); choosing a direction undims it and enables stop picking. While **two or more** routes are focused, the same control becomes clear-all **×** (scale pulse + slight red tint); with zero or one focused it stays **+**.
 - Sheet paints immediately; route catalog stays in memory (idle-prefetched). Typing shows up to 8 prefix-matched suggestions — no full-route datalist in the DOM.
 - Map shows OSRM road-snapped route polyline (same as focus map), all stops on that direction, and your location when available; paints stop-to-stop first then upgrades the path; viewport auto-fits the full path.
 - Added routes persist in browser localStorage; `js/config.js` seeds the list on first visit.
-- Long-press a row to show remove (×); confirm before delete.
+- Swipe a row left to reveal Delete (iOS-style); tap Delete and confirm to remove. Only one row can be open at a time; vertical list scroll is preserved via axis lock.
 
 ### ETA list
 
@@ -33,7 +33,7 @@ Personal use: mobile, Hong Kong, checking ETAs before leaving home or office.
 - Each row shows route label, primary ETA, and secondary ETA when available.
 - Remarks (e.g. "No scheduled service") shown when API returns no upcoming ETA.
 - Errors shown inline per row.
-- Auto-refresh every 5 seconds (`REFRESH_INTERVAL_MS`).
+- Auto-refresh every 5 seconds (`REFRESH_INTERVAL_MS`); watch-sheet status shows last-updated plus a countdown to the next poll.
 - Tap outside rows (empty watch-sheet padding) to refresh manually.
 - Refreshes when tab becomes visible again.
 
@@ -45,11 +45,11 @@ Personal use: mobile, Hong Kong, checking ETAs before leaving home or office.
 
 ### Focus map
 
-- Full-bleed Leaflet map fills the viewport; watchlist sits in a liquid-glass sheet (`.watch-sheet`) over the bottom half.
-- Idle (no row selected): continuously follows GPS, centered in the **top-half** active area (falls back to `LOCATION` in `config.js` until a fix arrives).
-- Tap a row to focus (tap again to deselect): map auto-fits your location, the boarding stop(s), and the estimated bus(es) into the top-half active area (asymmetric `fitBounds` padding / pan offset so the glass sheet does not cover framed markers) — deferred until layout settles so Leaflet has a real size.
+- Full-bleed Leaflet map fills the viewport; watchlist sits in a more transparent liquid-glass sheet (`.watch-sheet`, `--watch-sheet-glass`) over the bottom half. Last-updated time sits at the top of the sheet with a “next Ns” countdown to auto-refresh.
+- Idle (no row selected): Maps/Uber-style GPS follow — the you marker always tracks GPS, but the map recenters into the **top-half** active area only when you leave a soft follow window (`IDLE_FOLLOW_WINDOW` in `config.js`). Falls back to `LOCATION` in `config.js` until a fix arrives. You marker is slightly larger (36px hit area) for glanceability.
+- Tap a row to focus (tap again to deselect): map auto-fits your location, the boarding stop(s), and the estimated bus(es) into the top-half active area (asymmetric `fitBounds` padding / pan offset so the glass sheet does not cover framed markers) — deferred until layout settles so Leaflet has a real size. Each focused boarding stop shows a simple glass name bubble above the pin; text after the first comma wraps to a second, quieter line; if several focused routes share the same stop, only one label is shown.
 - Any number of routes can be focused at once; row/map colors cycle through a 6-color `ROUTE_COLORS` palette (blue, yellow, green, coral, violet, teal).
-- While one or more routes are focused, the **+** morphs into a clear **×** (rotate + scale pulse, slight red background); tapping it deselects all focused routes and returns to idle GPS follow.
+- While **two or more** routes are focused, the **+** morphs into a clear **×** (rotate + scale pulse, slight red background); tapping it deselects all focused routes and returns to idle GPS follow. With a single focused route the control stays **+** (tap the row to deselect).
 - Focus always shows the "you" marker when geolocation is available; road-following route polylines; estimated bus positions with smooth animation between polls. Multi-select uses slightly lower line opacity so overlapping paths stay readable.
 - Deselecting the last focused row returns to idle GPS follow (map stays visible).
 - Bus position derived from upstream stop ETAs + OSRM road-snapped polylines.
@@ -61,17 +61,17 @@ Personal use: mobile, Hong Kong, checking ETAs before leaving home or office.
 - Placement is floored at upstream stops the bus has already passed, so missing mid-route ETAs cannot snap the marker back to the terminus.
 - When a fresh Citybus ETA revises the predicted position (earlier or later), the marker animates along the route polyline to the new spot over `BUS_REPOSITION_MS` (1.2 s), then resumes normal clock-based tracking — no freeze, teleport, or dissolve for same-bus revisions.
 - Same-bus ETA revisions may rewind the marker at most `MAX_BUS_REWIND_M` (400 m) behind the furthest progress shown (`progressHighWaterCum`); repeated ETA slips cannot walk the marker back to the terminus.
-- Lightweight boarding ETA updates re-sanitize the cached ETA chain between full focus refreshes; when boarding ETA drops to `ARRIVING_THRESHOLD_MIN` (1 min), the marker snaps to the boarding stop (same as a full estimate) without waiting for the next full refresh.
+- Lightweight boarding ETA updates re-sanitize the cached ETA chain between full focus refreshes; when boarding ETA drops to `ARRIVING_THRESHOLD_MIN` (1 min), the marker eases along the route onto the boarding stop via `beginArriveAtStop` / `startBusReposition` (same as the rAF loop) without waiting for the next full refresh.
 - Lightweight updates must not rewind `trackingNowMs`: when Citybus `snapshotMs` is unchanged, `receivedAtMs` is left alone so the 5 s poll cannot reset the animation clock. Same-bus boarding ETA revisions update in place and may start a reposition animation; full refresh runs only on real handoff, `snapshotMs` change, or `FOCUS_REFRESH_INTERVAL_MS`.
 - Row refresh (5 s) updates boarding ETA on the map estimate in place; full map re-estimate + repaint runs when Citybus `snapshotMs` changes or every `FOCUS_REFRESH_INTERVAL_MS` (60 s). Full refresh with an unchanged `snapshotMs` also preserves `receivedAtMs` so a timed re-estimate does not rewind the clock. Same-bus full refresh keeps the marker and animates to the new prediction.
 - Upstream stop ETAs cached for `UPSTREAM_ETA_CACHE_TTL_MS` (60 s) between full focus refreshes.
-- Bus marker animates continuously via rAF between full re-estimates (not driven by 5 s row poll); the rAF loop also snaps to the boarding stop once ETA is under `ARRIVING_THRESHOLD_MIN`.
+- Bus marker animates continuously via rAF between full re-estimates (not driven by 5 s row poll); once ETA is under `ARRIVING_THRESHOLD_MIN`, the rAF loop eases the marker into the boarding stop along the polyline instead of teleporting.
 - When the tracked bus’s boarding ETA is past the tracking clock, the marker freezes in place for a CSS Thanos-style sand dissolve (reposition/rewind cleared; position updates ignored while `focus-marker--dissolving`), then tracking hands off to the next upcoming ETA (`second`); if none, the marker clears. Soft-appear on the new bus.
 - Background prefetch of route geometry, OSRM cache, Leaflet, and route catalog after idle.
 
 ### Theme
 
-- Light/dark mode via toggle fixed on the right above the watch-sheet (separate from the centered **+** / clear **×**); auto-schedules by Hong Kong sunrise/sunset when no manual preference saved.
+- Light/dark mode via a vertical sun/moon control in the map top-right (replaces the old zoom +/- slot); auto-schedules by Hong Kong sunrise/sunset when no manual preference saved. The centered **+** / clear **×** stays above the watch-sheet.
 - Map tiles and row focus colors follow theme.
 
 ### Data & caching

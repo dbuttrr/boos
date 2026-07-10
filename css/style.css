@@ -31,6 +31,7 @@ html {
   --focus-glass-border: rgba(255, 255, 255, 0.65);
   --focus-glass-highlight: rgba(255, 255, 255, 0.75);
   --focus-shadow: 0 10px 28px rgba(15, 20, 25, 0.1);
+  --watch-sheet-glass: rgba(255, 255, 255, 0.2);
   --row-glass: rgba(255, 255, 255, 0.48);
   --row-glass-border: rgba(255, 255, 255, 0.7);
   --row-glass-shadow: 0 4px 16px rgba(15, 20, 25, 0.06),
@@ -77,6 +78,7 @@ html {
   --focus-glass-border: rgba(255, 255, 255, 0.2);
   --focus-glass-highlight: rgba(255, 255, 255, 0.18);
   --focus-shadow: 0 14px 36px rgba(0, 0, 0, 0.4);
+  --watch-sheet-glass: rgba(12, 16, 22, 0.28);
   --row-glass: rgba(255, 255, 255, 0.09);
   --row-glass-border: rgba(255, 255, 255, 0.18);
   --row-glass-shadow: 0 8px 24px rgba(0, 0, 0, 0.35),
@@ -130,36 +132,6 @@ body {
   height: 100%;
 }
 
-.header {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  z-index: 15;
-  padding: calc(env(safe-area-inset-top, 0px) + 0.375rem) 1rem 0.375rem;
-  pointer-events: none;
-}
-
-.header__bar {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 1.5rem;
-}
-
-.header__subtitle {
-  margin: 0;
-  padding: 0.25rem 0.625rem;
-  border-radius: 999px;
-  font-size: 0.6875rem;
-  color: var(--text-subtle);
-  background: var(--focus-glass);
-  border: 1px solid var(--focus-glass-border);
-  box-shadow: var(--row-glass-shadow);
-  backdrop-filter: blur(12px) saturate(1.4);
-  -webkit-backdrop-filter: blur(12px) saturate(1.4);
-}
-
 /* Liquid-glass watchlist over the bottom half of the map */
 .watch-sheet {
   position: fixed;
@@ -171,9 +143,9 @@ body {
   flex-direction: column;
   height: 48dvh;
   max-height: 48dvh;
-  border-radius: 1.25rem;
+  border-radius: 2rem;
   border: 1px solid var(--focus-glass-border);
-  background: var(--focus-glass);
+  background: var(--watch-sheet-glass, var(--focus-glass));
   background-image: linear-gradient(
     135deg,
     var(--focus-glass-highlight) 0%,
@@ -187,13 +159,40 @@ body {
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
+.watch-sheet__status {
+  flex-shrink: 0;
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.5rem;
+  margin: 0;
+  padding: 0.65rem 1rem 0.15rem;
+  font-size: 0.6875rem;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  color: var(--text-subtle);
+  text-align: center;
+}
+
+.watch-sheet__countdown {
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.watch-sheet__countdown::before {
+  content: "·";
+  margin-right: 0.5rem;
+  color: var(--text-faint);
+}
+
 .cards {
   display: flex;
   flex-direction: column;
   flex: 1;
   min-height: 0;
   gap: 0;
-  padding: 0.75rem;
+  padding: 0.5rem 0.75rem 0.75rem;
   overflow-x: hidden;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
@@ -212,14 +211,76 @@ body {
 
 .row {
   position: relative;
+  display: block;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 1.375rem;
+  background: transparent;
+  box-shadow: none;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  /* Visible at rest so the focused ring/glow isn't clipped; hidden while swiping. */
+  overflow: visible;
+  touch-action: pan-y;
+}
+
+.row__actions {
+  position: absolute;
+  inset: 0 0 0 auto;
+  z-index: 0;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 4.75rem;
+  padding: 0.35rem;
+}
+
+.row__delete {
+  flex: 1;
+  margin: 0;
+  padding: 0 0.4rem;
+  border: none;
+  border-radius: 1.125rem;
+  background: var(--error);
+  color: #fff;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  opacity: var(--row-swipe-progress, 0);
+  pointer-events: none;
+  -webkit-tap-highlight-color: transparent;
+  transition: opacity 0.2s ease;
+}
+
+.row--swiping .row__delete {
+  transition: none;
+}
+
+.row--swipe-open .row__delete {
+  pointer-events: auto;
+}
+
+.row__delete:active {
+  filter: brightness(0.92);
+}
+
+/* Visual card — match main `.row` chrome; no transform at rest so backdrop-filter stays true. */
+.row__slide {
+  position: relative;
+  z-index: 1;
   display: flex;
   align-items: center;
   justify-content: flex-start;
   gap: 0;
+  width: 100%;
+  box-sizing: border-box;
   padding: 0.75rem 0.875rem;
   margin: 0;
   border: 1px solid var(--row-glass-border);
-  border-radius: 1rem;
+  border-radius: 1.375rem;
   background: var(--row-glass);
   background-image: linear-gradient(
     135deg,
@@ -233,10 +294,9 @@ body {
   transition: opacity 0.2s ease, background 0.2s ease, box-shadow 0.2s ease,
     transform 0.2s ease, border-color 0.2s ease;
   -webkit-tap-highlight-color: transparent;
-  overflow: hidden;
 }
 
-.row::before {
+.row__slide::before {
   content: "";
   position: absolute;
   inset: 0;
@@ -250,8 +310,23 @@ body {
   opacity: 0.7;
 }
 
-.row:active {
+.row:active:not(.row--swiping):not(.row--swipe-open) .row__slide {
   transform: scale(0.985);
+}
+
+.row--swiping,
+.row--swipe-open {
+  overflow: hidden;
+  touch-action: none;
+}
+
+.row--swiping .row__slide,
+.row--swipe-open .row__slide {
+  transform: translateX(var(--row-swipe-x, 0px));
+}
+
+.row--swiping .row__slide {
+  transition: none;
 }
 
 .row--loading {
@@ -267,7 +342,7 @@ body {
   opacity: 0.78;
 }
 
-.row--focused {
+.row--focused .row__slide {
   background: var(--row-focus-bg, var(--row-glass-focused));
   border-color: var(--row-focus-border, var(--focus-selected-border));
   box-shadow: var(--row-glass-shadow),
@@ -275,31 +350,7 @@ body {
     var(--row-focus-glow, var(--row-focused-glow));
 }
 
-/* Leaflet chrome on full-bleed map (top-right stays in active area) */
-.map-stage .leaflet-control-zoom {
-  border: 1px solid var(--focus-glass-border) !important;
-  border-radius: 0.75rem !important;
-  overflow: hidden;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
-  margin-top: calc(env(safe-area-inset-top, 0px) + 2.75rem) !important;
-  margin-right: 0.625rem !important;
-}
-
-.map-stage .leaflet-control-zoom a {
-  width: 2rem !important;
-  height: 2rem !important;
-  line-height: 2rem !important;
-  background: var(--focus-glass) !important;
-  color: var(--text) !important;
-  border-bottom-color: var(--focus-glass-border) !important;
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-}
-
-.map-stage .leaflet-control-zoom a:hover {
-  background: var(--bg) !important;
-}
-
+/* Leaflet attribution on full-bleed map (above the watch-sheet) */
 .map-stage .leaflet-control-attribution {
   margin: 0 0 calc(48dvh + 0.75rem) 0 !important;
   padding: 0.15rem 0.4rem !important;
@@ -327,8 +378,8 @@ body {
 .focus-marker__you {
   position: relative;
   display: block;
-  width: 28px;
-  height: 28px;
+  width: 36px;
+  height: 36px;
 }
 
 .focus-marker__pulse {
@@ -344,12 +395,12 @@ body {
   position: absolute;
   top: 50%;
   left: 50%;
-  width: 12px;
-  height: 12px;
-  margin: -6px 0 0 -6px;
+  width: 15px;
+  height: 15px;
+  margin: -7.5px 0 0 -7.5px;
   border-radius: 50%;
   background: var(--focus-you);
-  border: 2.5px solid var(--focus-marker-border);
+  border: 3px solid var(--focus-marker-border);
   box-shadow: 0 1px 6px rgba(0, 0, 0, 0.35);
 }
 
@@ -375,6 +426,58 @@ body {
   width: 22px;
   height: 30px;
   filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.35));
+}
+
+.focus-marker__stop-wrap {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.leaflet-marker-icon.focus-marker--stop-labeled {
+  overflow: visible !important;
+}
+
+.focus-marker__stop-label {
+  position: relative;
+  z-index: 2;
+  max-width: 10.25rem;
+  margin-bottom: 5px;
+  padding: 0.35rem 0.6rem;
+  border-radius: 0.75rem;
+  background: var(--focus-glass);
+  border: 1px solid var(--focus-glass-border);
+  box-shadow: var(--focus-shadow), inset 0 1px 0 var(--focus-glass-highlight);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2);
+  backdrop-filter: blur(14px) saturate(1.2);
+  color: var(--text);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  line-height: 1.25;
+  text-align: center;
+  animation: focus-stop-label-in 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.focus-marker__stop-label-text,
+.focus-marker__stop-label-sub {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.focus-marker__stop-label-sub {
+  margin-top: 0.05rem;
+  color: var(--text-muted);
+  font-size: 0.625rem;
+  font-weight: 500;
+  letter-spacing: 0.015em;
 }
 
 .focus-marker__stop-head {
@@ -407,8 +510,34 @@ body {
 }
 
 .focus-marker--stop-selected .focus-marker__stop-head {
-  background: var(--focus-accent);
-  box-shadow: 0 0 0 3px var(--focus-selected);
+  background: var(--stop-label-accent, var(--focus-accent));
+  box-shadow: 0 0 0 3px
+    color-mix(
+      in srgb,
+      var(--stop-label-accent, var(--focus-accent)) 28%,
+      transparent
+    );
+}
+
+.focus-marker--stop-selected .focus-marker__stop-stem {
+  background: var(--stop-label-accent, var(--focus-accent));
+}
+
+@keyframes focus-stop-label-in {
+  from {
+    opacity: 0;
+    transform: translateY(5px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .focus-marker__stop-label {
+    animation: none;
+  }
 }
 
 .row__main {
@@ -418,37 +547,6 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
-}
-
-.row__remove {
-  flex-shrink: 0;
-  width: 0;
-  height: 1.75rem;
-  margin: 0;
-  padding: 0;
-  border: none;
-  border-radius: 0.5rem;
-  background: transparent;
-  color: var(--text-subtle);
-  font-size: 1.125rem;
-  line-height: 1;
-  cursor: pointer;
-  overflow: hidden;
-  opacity: 0;
-  pointer-events: none;
-  transition: width 0.15s ease, margin 0.15s ease, opacity 0.15s ease,
-    color 0.15s ease;
-}
-
-.row--editing .row__remove {
-  width: 1.75rem;
-  margin-right: 0.375rem;
-  opacity: 1;
-  pointer-events: auto;
-}
-
-.row--editing .row__remove:hover {
-  color: var(--error);
 }
 
 /* Add-route sheet */
@@ -472,7 +570,7 @@ body {
   flex-direction: column;
   flex: 1;
   margin: 0.5rem;
-  border-radius: 1.25rem;
+  border-radius: 2rem;
   border: 1px solid var(--focus-glass-border);
   background: var(--bg);
   background-image: var(--bg-wash);
@@ -533,7 +631,7 @@ body {
   width: 100%;
   padding: 0.625rem 0.75rem;
   border: 1px solid var(--border);
-  border-radius: 0.75rem;
+  border-radius: 1rem;
   background: var(--row-glass);
   color: var(--text);
   font-size: 1rem;
@@ -550,7 +648,7 @@ body {
   margin: 0.375rem 0 0;
   padding: 0;
   border: 1px solid var(--border);
-  border-radius: 0.75rem;
+  border-radius: 1rem;
   background: var(--bg);
   overflow: hidden;
   max-height: 14rem;
@@ -617,7 +715,7 @@ body {
 .add-sheet__dir-btn {
   padding: 0.625rem 0.5rem;
   border: 1px solid var(--border);
-  border-radius: 0.75rem;
+  border-radius: 1rem;
   background: var(--row-glass);
   color: var(--text);
   font-size: 0.8125rem;
@@ -676,7 +774,7 @@ body {
 .add-sheet__btn {
   flex: 1;
   padding: 0.75rem 1rem;
-  border-radius: 0.875rem;
+  border-radius: 1.125rem;
   font-size: 0.9375rem;
   font-weight: 600;
   cursor: pointer;
@@ -914,10 +1012,6 @@ body.add-sheet-open .theme-toggle {
   }
 }
 
-body.focus-active .header__subtitle {
-  color: var(--text-muted);
-}
-
 .row__route {
   flex: 1;
   min-width: 0;
@@ -1017,8 +1111,8 @@ body.focus-active .header__subtitle {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 2.5rem;
-  height: 2.5rem;
+  width: 2rem;
+  height: 2rem;
   padding: 0;
   border: 1px solid var(--row-glass-border);
   border-radius: 50%;
@@ -1029,7 +1123,7 @@ body.focus-active .header__subtitle {
     transparent 48%
   );
   color: var(--text);
-  font-size: 1.375rem;
+  font-size: 1.25rem;
   font-weight: 500;
   line-height: 1;
   cursor: pointer;
@@ -1088,99 +1182,66 @@ body.focus-active .header__subtitle {
   }
 }
 
-/* Liquid-glass theme toggle — fixed right, same height as nav-dock */
+/* Vertical sun/moon theme control — map top-right */
 .theme-toggle {
   position: fixed;
+  top: calc(env(safe-area-inset-top, 0px) + 0.75rem);
   right: calc(env(safe-area-inset-right, 0px) + 0.75rem);
-  bottom: calc(
-    env(safe-area-inset-bottom, 0px) + 0.5rem + 48dvh + 0.5rem
-  );
   z-index: 25;
+  display: flex;
+  flex-direction: column;
+  width: 2rem;
+  margin: 0;
   padding: 0;
   border: none;
-  background: transparent;
-  cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
+  border-radius: 1rem;
+  overflow: hidden;
+  background: var(--watch-sheet-glass, var(--focus-glass));
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.1);
+  backdrop-filter: blur(16px) saturate(1.5);
+  -webkit-backdrop-filter: blur(16px) saturate(1.5);
   transition: opacity 0.2s ease;
 }
 
-.theme-toggle:focus-visible {
-  outline: 2px solid var(--focus-accent);
-  outline-offset: 4px;
-  border-radius: 999px;
-}
-
-.theme-toggle__track {
-  position: relative;
-  display: block;
-  width: 3.5rem;
+.theme-toggle__btn {
+  box-sizing: border-box;
+  display: grid;
+  place-items: center;
+  width: 2rem;
   height: 2rem;
-  border: 1px solid var(--row-glass-border);
-  border-radius: 999px;
-  background: var(--focus-glass);
-  background-image: linear-gradient(
-    135deg,
-    var(--focus-glass-highlight) 0%,
-    transparent 48%
-  );
-  box-shadow: var(--row-glass-shadow);
-  backdrop-filter: blur(20px) saturate(1.6);
-  -webkit-backdrop-filter: blur(20px) saturate(1.6);
-  overflow: hidden;
-  transition: background 0.25s ease, border-color 0.25s ease,
-    box-shadow 0.25s ease;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  line-height: 0;
+  -webkit-appearance: none;
+  appearance: none;
+  -webkit-tap-highlight-color: transparent;
+  transition: color 0.2s ease, opacity 0.2s ease;
 }
 
-.theme-toggle__track::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  pointer-events: none;
-  background: linear-gradient(
-    180deg,
-    var(--glass-sheen) 0%,
-    transparent 45%
-  );
-  opacity: 0.75;
+.theme-toggle__btn + .theme-toggle__btn {
+  border-top: none;
 }
 
-.theme-toggle__thumb {
-  position: absolute;
-  top: 0.2rem;
-  left: 0.2rem;
-  width: 1.5rem;
-  height: 1.5rem;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.92);
-  background-image: linear-gradient(
-    160deg,
-    rgba(255, 255, 255, 0.95) 0%,
-    rgba(255, 255, 255, 0.55) 100%
-  );
-  box-shadow: 0 2px 8px rgba(15, 20, 25, 0.18),
-    inset 0 1px 0 rgba(255, 255, 255, 0.9);
-  transition: transform 0.35s cubic-bezier(0.34, 1.4, 0.64, 1),
-    background 0.25s ease, box-shadow 0.25s ease;
-  z-index: 2;
+.theme-toggle__btn:active {
+  opacity: 0.65;
 }
 
-[data-theme="dark"] .theme-toggle__thumb {
-  transform: translateX(1.5rem);
-  background: rgba(40, 48, 60, 0.95);
-  background-image: linear-gradient(
-    160deg,
-    rgba(70, 80, 96, 0.95) 0%,
-    rgba(28, 34, 44, 0.9) 100%
-  );
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4),
-    inset 0 1px 0 rgba(255, 255, 255, 0.12);
+.theme-toggle__btn:focus-visible {
+  outline: 2px solid var(--focus-accent);
+  outline-offset: -2px;
+  z-index: 1;
 }
 
-.theme-toggle:active .theme-toggle__thumb {
-  transform: scale(0.92);
-}
-
-[data-theme="dark"] .theme-toggle:active .theme-toggle__thumb {
-  transform: translateX(1.5rem) scale(0.92);
+.theme-toggle__icon {
+  width: 1.05rem;
+  height: 1.05rem;
+  display: block;
+  margin: 0;
+  flex-shrink: 0;
+  overflow: visible;
 }

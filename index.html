@@ -12,11 +12,6 @@
       <div id="map-stage" class="map-stage" aria-hidden="false">
         <div id="focus-map" class="map-stage__map" role="img" aria-label="Map"></div>
       </div>
-      <header class="header">
-        <div class="header__bar">
-          <p class="header__subtitle" id="last-refresh">Loading…</p>
-        </div>
-      </header>
       <nav class="nav-dock" aria-label="App controls">
         <button
           type="button"
@@ -27,18 +22,71 @@
           +
         </button>
       </nav>
-      <button
-        type="button"
-        id="theme-toggle"
+      <div
         class="theme-toggle"
-        aria-label="Switch to dark mode"
-        aria-pressed="false"
+        id="theme-toggle"
+        role="group"
+        aria-label="Color theme"
       >
-        <span class="theme-toggle__track" aria-hidden="true">
-          <span class="theme-toggle__thumb"></span>
-        </span>
-      </button>
+        <button
+          type="button"
+          class="theme-toggle__btn theme-toggle__btn--light"
+          data-theme-choice="light"
+          aria-label="Light mode"
+          aria-pressed="true"
+        >
+          <svg
+            class="theme-toggle__icon"
+            viewBox="0 0 24 24"
+            aria-hidden="true"
+            focusable="false"
+          >
+            <circle
+              cx="12"
+              cy="12"
+              r="3.75"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.75"
+            />
+            <path
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.75"
+              stroke-linecap="round"
+              d="M12 3v2.25M12 18.75V21M3 12h2.25M18.75 12H21M5.64 5.64l1.6 1.6M16.76 16.76l1.6 1.6M18.36 5.64l-1.6 1.6M7.24 16.76l-1.6 1.6"
+            />
+          </svg>
+        </button>
+        <button
+          type="button"
+          class="theme-toggle__btn theme-toggle__btn--dark"
+          data-theme-choice="dark"
+          aria-label="Dark mode"
+          aria-pressed="false"
+        >
+          <svg
+            class="theme-toggle__icon"
+            viewBox="0 0 24 24"
+            aria-hidden="true"
+            focusable="false"
+          >
+            <path
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.75"
+              stroke-linejoin="round"
+              stroke-linecap="round"
+              d="M14.3 3.85A8.25 8.25 0 1 0 20.15 14.3 6.6 6.6 0 0 1 14.3 3.85Z"
+            />
+          </svg>
+        </button>
+      </div>
       <div class="watch-sheet">
+        <p class="watch-sheet__status">
+          <span id="last-refresh">Loading…</span>
+          <span class="watch-sheet__countdown" id="next-refresh" hidden></span>
+        </p>
         <section class="cards" id="cards" aria-live="polite"></section>
       </div>
       <div id="add-sheet" class="add-sheet" hidden aria-modal="true" role="dialog" aria-labelledby="add-sheet-title">
