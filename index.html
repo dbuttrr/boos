@@ -27,17 +27,48 @@
           +
         </button>
       </nav>
-      <button
-        type="button"
-        id="theme-toggle"
+      <div
         class="theme-toggle"
-        aria-label="Switch to dark mode"
-        aria-pressed="false"
+        id="theme-toggle"
+        role="group"
+        aria-label="Color theme"
       >
-        <span class="theme-toggle__track" aria-hidden="true">
-          <span class="theme-toggle__thumb"></span>
-        </span>
-      </button>
+        <button
+          type="button"
+          class="theme-toggle__btn theme-toggle__btn--light"
+          data-theme-choice="light"
+          aria-label="Light mode"
+          aria-pressed="true"
+        >
+          <svg class="theme-toggle__icon" viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" stroke-width="1.75" />
+            <path
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.75"
+              stroke-linecap="round"
+              d="M12 2.75v2.5M12 18.75v2.5M2.75 12h2.5M18.75 12h2.5M5.05 5.05l1.77 1.77M17.18 17.18l1.77 1.77M18.95 5.05l-1.77 1.77M6.82 17.18l-1.77 1.77"
+            />
+          </svg>
+        </button>
+        <button
+          type="button"
+          class="theme-toggle__btn theme-toggle__btn--dark"
+          data-theme-choice="dark"
+          aria-label="Dark mode"
+          aria-pressed="false"
+        >
+          <svg class="theme-toggle__icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.75"
+              stroke-linejoin="round"
+              d="M19.25 13.6A7.5 7.5 0 0 1 10.4 4.75 7.75 7.75 0 1 0 19.25 13.6Z"
+            />
+          </svg>
+        </button>
+      </div>
       <div class="watch-sheet">
         <section class="cards" id="cards" aria-live="polite"></section>
       </div>
