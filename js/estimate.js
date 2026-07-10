@@ -141,7 +141,49 @@ function minutesUntil(isoEta, nowMs = Date.now()) {
   return ms / 60_000;
 }
 
-function matchBusEta(etaResult, reference) {
+/**
+ * Pick the boarding-stop ETA still ahead of the tracking clock.
+ * If `first` is past and `second` is upcoming, hand off to the next bus.
+ */
+export function resolveActiveBoardingEta(boardingEta) {
+  const nowMs = trackingNowMs(boardingEta);
+  const first = boardingEta?.first ?? null;
+  const second = boardingEta?.second ?? null;
+
+  if (first?.eta && minutesUntil(first.eta, nowMs) != null) {
+    return { active: first, handedOff: false, nowMs };
+  }
+  if (second?.eta && minutesUntil(second.eta, nowMs) != null) {
+    return { active: second, handedOff: true, nowMs };
+  }
+  return {
+    active: null,
+    handedOff: Boolean(first?.eta || second?.eta),
+    nowMs,
+  };
+}
+
+/**
+ * True when covering `distM` between two ETAs does not imply speed above
+ * MAX_BUS_SPEED (following-bus / schedule noise). Idle/slow legs are allowed.
+ */
+function isPlausibleLeg(distM, fromMs, toMs) {
+  const dtMin = (toMs - fromMs) / 60_000;
+  if (dtMin <= 0) return false;
+  if (!(distM > 0)) return true;
+  return distM / dtMin <= MAX_BUS_SPEED_M_PER_MIN;
+}
+
+/**
+ * Correlate an upstream stop ETA to the boarding bus.
+ * Prefers the earliest plausible ETA before boarding (furthest along the
+ * route). Latest-before-boarding wrongly matches the following bus on
+ * multi-bus routes and parks the marker far upstream.
+ *
+ * @param {number|null} [distToBoardM] - meters from this stop to boarding;
+ *   when set, rejects candidates that imply speed above MAX_BUS_SPEED.
+ */
+function matchBusEta(etaResult, reference, distToBoardM = null) {
   if (!reference?.eta) return null;
 
   const boardTime = new Date(reference.eta).getTime();
@@ -151,10 +193,13 @@ function matchBusEta(etaResult, reference) {
       if (reference.dest_en && e.dest_en && e.dest_en !== reference.dest_en) {
         return false;
       }
-      return new Date(e.eta).getTime() < boardTime;
+      const etaMs = new Date(e.eta).getTime();
+      if (etaMs >= boardTime) return false;
+      if (distToBoardM == null) return true;
+      return isPlausibleLeg(distToBoardM, etaMs, boardTime);
     })
     .sort(
-      (a, b) => new Date(b.eta).getTime() - new Date(a.eta).getTime()
+      (a, b) => new Date(a.eta).getTime() - new Date(b.eta).getTime()
     );
 
   return candidates[0] ?? null;
@@ -223,6 +268,7 @@ function passedStopFloor({
   first,
   polyline,
   stopCoordsById,
+  boardingCum,
 }) {
   const byStopId = new Map(
     (upstreamEtas ?? []).filter(Boolean).map((item) => [item.stopId, item])
@@ -233,11 +279,14 @@ function passedStopFloor({
     const item = byStopId.get(rs.stopId);
     if (!item) continue;
 
-    if (matchBusEta(item.eta, first)?.eta) break;
-
     const stopCoord = stopCoordsById.get(rs.stopId);
     if (!stopCoord) continue;
-    minCum = Math.max(minCum, nearestCumDist(polyline, stopCoord));
+    const stopCum = nearestCumDist(polyline, stopCoord);
+    const distToBoardM = boardingCum - stopCum;
+
+    if (matchBusEta(item.eta, first, distToBoardM)?.eta) break;
+
+    minCum = Math.max(minCum, stopCum);
   }
 
   return minCum;
@@ -262,13 +311,18 @@ function buildEtaChain({
     const stopCoord = stopCoordsById.get(rs.stopId);
     if (!stopCoord) continue;
 
+    const cumDist =
+      rs.stopId === boardingStopId
+        ? boardingCum
+        : nearestCumDist(polyline, stopCoord);
+
     let etaMs = null;
     if (rs.stopId === boardingStopId) {
       etaMs = new Date(first.eta).getTime();
     } else {
       const item = byStopId.get(rs.stopId);
       if (!item) continue;
-      const matched = matchBusEta(item.eta, first);
+      const matched = matchBusEta(item.eta, first, boardingCum - cumDist);
       if (!matched?.eta) continue;
       etaMs = new Date(matched.eta).getTime();
     }
@@ -279,7 +333,7 @@ function buildEtaChain({
       stopId: rs.stopId,
       seq: rs.seq,
       etaMs,
-      cumDist: nearestCumDist(polyline, stopCoord),
+      cumDist,
     });
   }
 
@@ -297,7 +351,16 @@ function buildEtaChain({
     boardingPoint.cumDist = boardingCum;
   }
 
-  return sanitizeEtaChain(deduped);
+  const boardEtaMs = boardingPoint?.etaMs;
+  const filtered =
+    boardEtaMs == null
+      ? deduped
+      : deduped.filter((p) => {
+          if (p.stopId === boardingStopId) return true;
+          return isPlausibleLeg(boardingCum - p.cumDist, p.etaMs, boardEtaMs);
+        });
+
+  return sanitizeEtaChain(filtered);
 }
 
 /**
@@ -322,9 +385,13 @@ export function positionFromEtaChain(
         Math.min(Math.max(floor, only.cumDist), boardingCum)
       );
     }
+    const minsUntil = (only.etaMs - trackingNowMs) / 60_000;
     return latLngFromCum(
       polyline,
-      Math.max(floor, only.cumDist - DEFAULT_BUS_SPEED_M_PER_MIN)
+      Math.max(
+        floor,
+        only.cumDist - DEFAULT_BUS_SPEED_M_PER_MIN * Math.max(0, minsUntil)
+      )
     );
   }
 
@@ -345,12 +412,26 @@ export function positionFromEtaChain(
   const first = chain[0];
   if (trackingNowMs < first.etaMs) {
     const next = chain[1];
-    const speed =
-      segmentSpeedMPerMin(first, next) ?? DEFAULT_BUS_SPEED_M_PER_MIN;
+    const last = chain[chain.length - 1];
+    // Use segment speed only when first→next is travel-time plausible;
+    // otherwise default — avoids 600 m/min × boarding ETA slamming to origin.
+    const rawSpeed = segmentSpeedMPerMin(first, next);
+    const speed = clampSpeed(
+      rawSpeed != null &&
+        isPlausibleLeg(next.cumDist - first.cumDist, first.etaMs, next.etaMs)
+        ? rawSpeed
+        : DEFAULT_BUS_SPEED_M_PER_MIN
+    );
     const minsUntilFirst = (first.etaMs - trackingNowMs) / 60_000;
-    const busCumDist = Math.max(
-      floor,
-      first.cumDist - speed * minsUntilFirst
+    const fromFirst = first.cumDist - speed * minsUntilFirst;
+    // Prefer boarding-ETA placement when the lead chain point is terminus
+    // schedule noise (future origin ETA while the bus is already mid-route).
+    const minsToBoard = (last.etaMs - trackingNowMs) / 60_000;
+    const fromBoard =
+      minsToBoard > 0 ? last.cumDist - speed * minsToBoard : last.cumDist;
+    const busCumDist = Math.min(
+      boardingCum,
+      Math.max(floor, fromFirst, fromBoard)
     );
     return latLngFromCum(polyline, busCumDist);
   }
@@ -448,15 +529,12 @@ function placeFromSegments(
 
   const speedMPerMin = clampSpeed(rawSpeed);
   const remainingDist = speedMPerMin * minutesToBoard;
-  let busCumDist = boardingCum - remainingDist;
-
-  if (busCumDist <= 0) {
-    busCumDist = Math.max(minCum, near[0].upCum);
-  } else {
-    busCumDist = Math.max(minCum, busCumDist);
-  }
-
-  busCumDist = Math.min(busCumDist, boardingCum);
+  // Floor at minCum — do not snap to the nearest upstream sample (often
+  // the terminus at cumDist 0) when remainingDist exceeds boardingCum.
+  const busCumDist = Math.max(
+    minCum,
+    Math.min(boardingCum, boardingCum - remainingDist)
+  );
   const busLatLng = pointAtCumDist(polyline, busCumDist);
 
   return {
@@ -490,15 +568,15 @@ export async function estimateBusPosition(
   boardingEta,
   { denseUpstream = false, refreshUpstream = false } = {}
 ) {
-  const first = boardingEta?.first;
-  if (!first?.eta) {
-    return emptyEstimate({ reason: "no-eta" });
+  const { active, handedOff, nowMs } = resolveActiveBoardingEta(boardingEta);
+  if (!active?.eta) {
+    return emptyEstimate({ reason: "no-eta", busChanged: handedOff });
   }
 
-  const nowMs = trackingNowMs(boardingEta);
+  const first = active;
   const minutesToBoard = minutesUntil(first.eta, nowMs);
   if (minutesToBoard == null) {
-    return emptyEstimate({ reason: "no-eta" });
+    return emptyEstimate({ reason: "no-eta", busChanged: handedOff });
   }
 
   const routeStops = await fetchRouteStops(entry.route, entry.direction);
@@ -518,6 +596,7 @@ export async function estimateBusPosition(
         busCumDist: null,
         stops: boardingOnly,
         reason: "stop-not-on-route",
+        busChanged: handedOff,
       },
       boardingEta
     );
@@ -526,13 +605,13 @@ export async function estimateBusPosition(
   const approachStops = routeStops.slice(0, boardingIndex + 1);
   const allCoords = await resolveRouteStopCoords(routeStops);
   if (!allCoords.length) {
-    return emptyEstimate({ reason: "no-coords" });
+    return emptyEstimate({ reason: "no-coords", busChanged: handedOff });
   }
 
   const stopCoordsById = new Map(allCoords.map((c) => [c.stopId, c]));
   const boardingStopCoord = stopCoordsById.get(entry.stopId);
   if (!boardingStopCoord) {
-    return emptyEstimate({ reason: "no-coords" });
+    return emptyEstimate({ reason: "no-coords", busChanged: handedOff });
   }
 
   const coords = [];
@@ -541,7 +620,7 @@ export async function estimateBusPosition(
     if (c) coords.push(c);
   }
   if (!coords.length) {
-    return emptyEstimate({ reason: "no-coords" });
+    return emptyEstimate({ reason: "no-coords", busChanged: handedOff });
   }
 
   const needUpstream =
@@ -599,6 +678,7 @@ export async function estimateBusPosition(
     stops,
     minutesToBoard,
     boardEtaMs: new Date(first.eta).getTime(),
+    busChanged: handedOff,
   };
 
   if (boardingIndex === 0) {
@@ -644,6 +724,7 @@ export async function estimateBusPosition(
     first,
     polyline,
     stopCoordsById,
+    boardingCum,
   });
 
   if (denseUpstream && etaChain.length >= 2) {
@@ -675,12 +756,6 @@ export async function estimateBusPosition(
 
   for (const item of upstreamEtas) {
     if (!item) continue;
-    const matched = matchBusEta(item.eta, first);
-    if (!matched?.eta) continue;
-
-    const upstreamTime = new Date(matched.eta).getTime();
-    const timeDeltaMin = (boardTime - upstreamTime) / 60_000;
-    if (timeDeltaMin <= 0.25) continue;
 
     const stopCoord = stopCoordsById.get(item.stopId);
     if (!stopCoord) continue;
@@ -688,6 +763,13 @@ export async function estimateBusPosition(
     const upCum = nearestCumDist(polyline, stopCoord);
     const dist = boardingCum - upCum;
     if (dist <= 0) continue;
+
+    const matched = matchBusEta(item.eta, first, dist);
+    if (!matched?.eta) continue;
+
+    const upstreamTime = new Date(matched.eta).getTime();
+    const timeDeltaMin = (boardTime - upstreamTime) / 60_000;
+    if (timeDeltaMin <= 0.25) continue;
 
     const speed = dist / timeDeltaMin;
     if (!Number.isFinite(speed) || speed <= 0) continue;

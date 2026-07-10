@@ -23,7 +23,7 @@ Personal use: mobile, Hong Kong, checking ETAs before leaving home or office.
 
 - Bottom floating dock **+** opens add sheet: enter route → pick direction → tap stop on map.
 - Sheet paints immediately; route catalog stays in memory (idle-prefetched). Typing shows up to 8 prefix-matched suggestions — no full-route datalist in the DOM.
-- Map shows route polyline, all stops on that direction, and your location when available.
+- Map shows OSRM road-snapped route polyline (same as focus map), all stops on that direction, and your location when available; paints stop-to-stop first then upgrades the path; viewport auto-fits the full path.
 - Added routes persist in browser localStorage; `js/config.js` seeds the list on first visit.
 - Long-press a row to show remove (×); confirm before delete.
 
@@ -46,18 +46,25 @@ Personal use: mobile, Hong Kong, checking ETAs before leaving home or office.
 ### Focus map
 
 - Tap a row to open map panel with boarding stop pin.
+- On select (and when the bus or you marker first appears), the map auto-fits to frame your location, the boarding stop, and the estimated bus — deferred until layout settles so Leaflet has a real size.
 - Single focus: shows "you" marker when geolocation available; road-following route polyline; estimated bus position with smooth animation between polls.
-- Dual focus (up to 2 routes): side-by-side route comparison; no "you" marker.
+- Dual focus (up to 2 routes): side-by-side route comparison; no "you" marker; fit frames boarding stops + buses only.
 - Third selection clears focus; deselecting last row closes panel.
 - Bus position derived from upstream stop ETAs + OSRM road-snapped polylines.
 - Focus map syncs tracking clock to Citybus `data_timestamp` / `generated_timestamp` (not raw device time).
 - Focus map fetches ETAs at all upstream approach stops and interpolates position along the active stop-to-stop segment.
+- Upstream ETAs are matched to the boarding bus with travel-time plausibility (implied speed ≤ `MAX_BUS_SPEED_M_PER_MIN`) and the earliest-before-boarding candidate — not latest — so a following bus on busy routes (e.g. 8X) cannot park the marker far upstream.
 - ETA chains are sanitized for time-vs-distance monotonicity so terminus schedule noise does not pin the bus marker at the origin.
+- When still “before” the first chain ETA (often a stale terminus departure), placement also considers boarding ETA × clamped speed so the marker is not stuck at cumDist 0 while the bus is mid-route; implausible first→next segment speeds fall back to `DEFAULT_BUS_SPEED_M_PER_MIN`.
 - Placement is floored at upstream stops the bus has already passed, so missing mid-route ETAs cannot snap the marker back to the terminus.
-- Lightweight boarding ETA updates re-sanitize the cached ETA chain between full focus refreshes.
-- Row refresh (5 s) updates boarding ETA on the map estimate in place; full map re-estimate + repaint runs when Citybus `snapshotMs` changes or every `FOCUS_REFRESH_INTERVAL_MS` (60 s).
+- When a fresh Citybus ETA revises the predicted position (earlier or later), the marker animates along the route polyline to the new spot over `BUS_REPOSITION_MS` (1.2 s), then resumes normal clock-based tracking — no freeze, teleport, or dissolve for same-bus revisions.
+- Same-bus ETA revisions may rewind the marker at most `MAX_BUS_REWIND_M` (400 m) behind the furthest progress shown (`progressHighWaterCum`); repeated ETA slips cannot walk the marker back to the terminus.
+- Lightweight boarding ETA updates re-sanitize the cached ETA chain between full focus refreshes; when boarding ETA drops to `ARRIVING_THRESHOLD_MIN` (1 min), the marker snaps to the boarding stop (same as a full estimate) without waiting for the next full refresh.
+- Lightweight updates must not rewind `trackingNowMs`: when Citybus `snapshotMs` is unchanged, `receivedAtMs` is left alone so the 5 s poll cannot reset the animation clock. Same-bus boarding ETA revisions update in place and may start a reposition animation; full refresh runs only on real handoff, `snapshotMs` change, or `FOCUS_REFRESH_INTERVAL_MS`.
+- Row refresh (5 s) updates boarding ETA on the map estimate in place; full map re-estimate + repaint runs when Citybus `snapshotMs` changes or every `FOCUS_REFRESH_INTERVAL_MS` (60 s). Full refresh with an unchanged `snapshotMs` also preserves `receivedAtMs` so a timed re-estimate does not rewind the clock. Same-bus full refresh keeps the marker and animates to the new prediction.
 - Upstream stop ETAs cached for `UPSTREAM_ETA_CACHE_TTL_MS` (60 s) between full focus refreshes.
-- Bus marker animates continuously via rAF between full re-estimates (not driven by 5 s row poll).
+- Bus marker animates continuously via rAF between full re-estimates (not driven by 5 s row poll); the rAF loop also snaps to the boarding stop once ETA is under `ARRIVING_THRESHOLD_MIN`.
+- When the tracked bus’s boarding ETA is past the tracking clock, the marker freezes in place for a CSS Thanos-style sand dissolve (reposition/rewind cleared; position updates ignored while `focus-marker--dissolving`), then tracking hands off to the next upcoming ETA (`second`); if none, the marker clears. Soft-appear on the new bus.
 - Background prefetch of route geometry, OSRM cache, Leaflet, and route catalog after idle.
 
 ### Theme

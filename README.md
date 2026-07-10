@@ -96,7 +96,7 @@ See [docs/PRD.md](docs/PRD.md) for full product behavior. Summary:
 - Shows the next 1–2 upcoming arrivals per watchlisted stop + direction
 - Auto-refreshes every 5 seconds; tap outside rows to refresh manually
 - Sorts by distance when geolocation is available; dims stops beyond ~20 min walk
-- Tap a row to open a map with estimated bus position; compare up to 2 routes
+- Tap a row to open a map fitted to you, the stop, and the estimated bus; compare up to 2 routes
 - Light/dark theme (auto by HK sunrise/sunset, or manual toggle)
 
 ## CORS

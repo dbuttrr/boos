@@ -39,7 +39,9 @@ Add styles to `style.css` following existing glass/row/focus patterns. Keep ligh
 
 Notable blocks: `row`, `focus-panel`, `add-sheet` (watchlist editor overlay + map; solid scrim, no backdrop blur; `add-sheet__suggestions` typeahead), `nav-dock` (bottom floating bar: add + theme), `theme-toggle`.
 
-`row__remove` is layout-collapsed (`width: 0`) until `row--editing` (long-press).
+`row__remove` is layout-collapsed (`width: 0`) until `row--editing` (long-press); spacing comes from its editing margin, not `.row` gap (gap stays 0 so left/right padding match when collapsed).
+
+Focus bus marker handoff: `focus-marker--dissolving` + `focus-marker__sand` / `__sand-chip` (Thanos-style sand blow up-and-right); `focus-marker--appearing` on the next bus. No canvas/WebGL.
 
 ## When shipping UI changes
 

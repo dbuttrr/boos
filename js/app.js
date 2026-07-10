@@ -2,8 +2,12 @@ import { initTheme } from "./theme.js";
 import {
   REFRESH_INTERVAL_MS,
   FOCUS_REFRESH_INTERVAL_MS,
+  ARRIVING_THRESHOLD_MIN,
   MAX_WALK_MINUTES,
   WALK_SPEED_M_PER_MIN,
+  BUS_REPOSITION_MS,
+  BUS_REPOSITION_MIN_M,
+  MAX_BUS_REWIND_M,
 } from "./config.js";
 import {
   fetchEta,
@@ -30,6 +34,7 @@ import {
   pointAtCumDist,
   positionFromEtaChain,
   sanitizeEtaChain,
+  resolveActiveBoardingEta,
   haversineMeters,
 } from "./estimate.js";
 import {
@@ -43,11 +48,12 @@ import {
   hideFocusPanel,
   updateYouMarker,
   updateBusMarker,
+  dissolveBusMarker,
   updateFocusOverlays,
   isFocusPanelVisible,
   prefetchLeaflet,
 } from "./map.js";
-import { showPickerMap, destroyPickerMap } from "./picker.js";
+import { showPickerMap, setPickerPath, destroyPickerMap } from "./picker.js";
 import { roadSnapStopsChunked } from "./routing.js";
 
 const cardsEl = document.getElementById("cards");
@@ -334,6 +340,103 @@ function selectionKey(ids = focusedIds) {
   return ids.join("|");
 }
 
+function clearBusReposition(estimate) {
+  if (!estimate) return;
+  estimate.repositionFromCum = null;
+  estimate.repositionToCum = null;
+  estimate.repositionStartedAt = null;
+}
+
+/** Raise furthest same-bus progress shown (never decreases until handoff). */
+function bumpProgressHighWater(estimate) {
+  if (!estimate || estimate.busCumDist == null) return;
+  const prev = estimate.progressHighWaterCum;
+  estimate.progressHighWaterCum =
+    prev == null ? estimate.busCumDist : Math.max(prev, estimate.busCumDist);
+}
+
+/**
+ * Placement floor: passed-stop floor plus capped rewind behind high water.
+ * Prevents repeated ETA slips from walking the marker back to the terminus.
+ */
+function trackingFloor(estimate) {
+  const passed = estimate?.minCumDist ?? 0;
+  const highWater =
+    estimate?.progressHighWaterCum ?? estimate?.busCumDist ?? 0;
+  return Math.max(passed, highWater - MAX_BUS_REWIND_M);
+}
+
+function startBusReposition(estimate, toCum) {
+  if (!estimate || toCum == null || estimate.busCumDist == null) return false;
+  const fromCum = estimate.busCumDist;
+  if (Math.abs(toCum - fromCum) < BUS_REPOSITION_MIN_M) return false;
+  estimate.repositionFromCum = fromCum;
+  estimate.repositionToCum = toCum;
+  estimate.repositionStartedAt = performance.now();
+  return true;
+}
+
+function easeOutCubic(t) {
+  return 1 - (1 - t) ** 3;
+}
+
+/** Lerp along the polyline while a reposition animation is active. */
+function tickBusReposition(estimate) {
+  if (
+    estimate.repositionStartedAt == null ||
+    estimate.repositionFromCum == null ||
+    estimate.repositionToCum == null ||
+    !estimate.polyline?.length
+  ) {
+    return null;
+  }
+
+  const elapsed = performance.now() - estimate.repositionStartedAt;
+  const t = Math.min(1, elapsed / BUS_REPOSITION_MS);
+  const cum =
+    estimate.repositionFromCum +
+    (estimate.repositionToCum - estimate.repositionFromCum) * easeOutCubic(t);
+  const point = pointAtCumDist(estimate.polyline, cum);
+  if (t >= 1) clearBusReposition(estimate);
+  return point;
+}
+
+/**
+ * Predicted cumDist from current ETA chain / speed (tracking floor applied).
+ */
+function predictedCumForEstimate(estimate, nowMs) {
+  if (!estimate?.polyline?.length) return null;
+  const boardingCum =
+    estimate.boardingCumDist ??
+    estimate.boardingStop?.cumDist ??
+    estimate.polyline[estimate.polyline.length - 1].cumDist;
+  if (boardingCum == null) return null;
+
+  const floor = trackingFloor(estimate);
+
+  if (estimate.etaChain?.length >= 2) {
+    const point = positionFromEtaChain(
+      estimate.etaChain,
+      estimate.polyline,
+      nowMs,
+      boardingCum,
+      floor
+    );
+    return point?.cumDist ?? null;
+  }
+
+  if (estimate.speedMPerMin && estimate.boardEtaMs != null) {
+    const minsLeft = (estimate.boardEtaMs - nowMs) / 60_000;
+    if (minsLeft <= 0) return boardingCum;
+    return Math.max(
+      floor,
+      Math.min(boardingCum, boardingCum - estimate.speedMPerMin * minsLeft)
+    );
+  }
+
+  return null;
+}
+
 function stopBusAnimation() {
   if (animFrame) {
     cancelAnimationFrame(animFrame);
@@ -390,45 +493,93 @@ function startBusAnimations(estimatesById, token = focusToken) {
     }
 
     let keepRunning = false;
+    let needsHandoffRefresh = false;
+
     for (const track of tracks) {
       if (!focusedIds.includes(track.id)) continue;
       const estimate = focusEstimates.get(track.id) ?? track.estimate;
       const { boardingCum } = track;
       let point = null;
 
+      const now = trackingNowMs(estimate);
+      const minsLeft = (estimate.boardEtaMs - now) / 60_000;
+
+      if (minsLeft <= 0) {
+        clearBusReposition(estimate);
+        needsHandoffRefresh = true;
+        continue;
+      }
+
+      // Match full-estimate arriving snap — do not keep interpolating from a
+      // stale origin ETA once boarding is under ARRIVING_THRESHOLD_MIN.
+      if (
+        minsLeft <= ARRIVING_THRESHOLD_MIN ||
+        estimate.reason === "arriving"
+      ) {
+        clearBusReposition(estimate);
+        const stop = estimate.boardingStop;
+        if (stop) {
+          estimate.reason = "arriving";
+          estimate.busCumDist = boardingCum;
+          estimate.busLatLng = { lat: stop.lat, lng: stop.lng };
+          bumpProgressHighWater(estimate);
+          updateBusMarker(track.id, { lat: stop.lat, lng: stop.lng });
+        }
+        continue;
+      }
+
+      // Animate along the route to a revised API prediction, then resume tracking.
+      const repositionPoint = tickBusReposition(estimate);
+      if (repositionPoint) {
+        estimate.busCumDist = repositionPoint.cumDist;
+        estimate.busLatLng = {
+          lat: repositionPoint.lat,
+          lng: repositionPoint.lng,
+        };
+        bumpProgressHighWater(estimate);
+        updateBusMarker(track.id, {
+          lat: repositionPoint.lat,
+          lng: repositionPoint.lng,
+        });
+        keepRunning = true;
+        continue;
+      }
+
+      // Tracking floor: passed stops + capped rewind behind high water.
+      const floor = trackingFloor(estimate);
+
       if (track.mode === "segment") {
-        const now = trackingNowMs(estimate);
         point = positionFromEtaChain(
           estimate.etaChain,
           estimate.polyline,
           now,
           boardingCum,
-          estimate.minCumDist ?? 0
+          floor
         );
-        const minsLeft = (estimate.boardEtaMs - now) / 60_000;
-        if (point && minsLeft > 0 && point.cumDist < boardingCum - 1) {
+        if (point && point.cumDist < boardingCum - 1) {
           keepRunning = true;
         }
       } else {
-        const now = trackingNowMs(estimate);
-        const minsLeft = (estimate.boardEtaMs - now) / 60_000;
-        if (minsLeft > 0) {
-          const cum = Math.max(
-            estimate.minCumDist ?? 0,
-            Math.min(boardingCum, boardingCum - track.speedMPerMin * minsLeft)
-          );
-          point = pointAtCumDist(estimate.polyline, cum);
-          if (cum < boardingCum - 1) keepRunning = true;
-        }
+        const cum = Math.max(
+          floor,
+          Math.min(boardingCum, boardingCum - track.speedMPerMin * minsLeft)
+        );
+        point = pointAtCumDist(estimate.polyline, cum);
+        if (cum < boardingCum - 1) keepRunning = true;
       }
 
       if (point) {
+        estimate.busCumDist = point.cumDist;
+        estimate.busLatLng = { lat: point.lat, lng: point.lng };
+        bumpProgressHighWater(estimate);
         updateBusMarker(track.id, { lat: point.lat, lng: point.lng });
       }
     }
 
     if (keepRunning) {
       animFrame = requestAnimationFrame(tick);
+    } else if (needsHandoffRefresh && token === focusToken) {
+      refreshFocusedEstimate({ refreshUpstream: true });
     }
   };
 
@@ -436,19 +587,63 @@ function startBusAnimations(estimatesById, token = focusToken) {
 }
 
 function applyLightweightFocusEtaUpdate(results) {
+  let needsHandoff = false;
+  let startedReposition = false;
+
   for (const { id, result } of results) {
     if (!focusedIds.includes(id)) continue;
     const estimate = focusEstimates.get(id);
-    if (!estimate || result?.error || !result?.first?.eta) continue;
+    if (!estimate || result?.error) continue;
 
-    const boardEtaMs = new Date(result.first.eta).getTime();
+    const { active, handedOff } = resolveActiveBoardingEta(result);
+    if (handedOff || !active?.eta) {
+      clearBusReposition(estimate);
+      needsHandoff = true;
+      continue;
+    }
+
+    const boardEtaMs = new Date(active.eta).getTime();
+
+    // Preserve tracking clock when snapshot is unchanged — resetting
+    // receivedAtMs would rewind trackingNowMs by ~poll interval.
+    if (
+      result.snapshotMs != null &&
+      result.snapshotMs !== estimate.snapshotMs
+    ) {
+      estimate.snapshotMs = result.snapshotMs;
+      estimate.receivedAtMs = result.receivedAtMs;
+    }
+
+    // Same-bus ETA revision: update in place (full refresh only on handoff).
     estimate.boardEtaMs = boardEtaMs;
-    estimate.snapshotMs = result.snapshotMs;
-    estimate.receivedAtMs = result.receivedAtMs;
 
-    const nowMs = trackingNowMs(result);
+    const nowMs = trackingNowMs(estimate);
     const minsLeft = (boardEtaMs - nowMs) / 60_000;
     estimate.minutesToBoard = minsLeft > 0 ? minsLeft : null;
+
+    if (minsLeft == null || minsLeft <= 0) {
+      clearBusReposition(estimate);
+      needsHandoff = true;
+      continue;
+    }
+
+    if (minsLeft <= ARRIVING_THRESHOLD_MIN) {
+      clearBusReposition(estimate);
+      const stop = estimate.boardingStop;
+      const boardingCum =
+        estimate.boardingCumDist ??
+        stop?.cumDist ??
+        estimate.polyline?.[estimate.polyline.length - 1]?.cumDist;
+      if (stop && boardingCum != null) {
+        estimate.reason = "arriving";
+        estimate.busCumDist = boardingCum;
+        estimate.busLatLng = { lat: stop.lat, lng: stop.lng };
+        estimate.speedMPerMin = null;
+        bumpProgressHighWater(estimate);
+        updateBusMarker(id, { lat: stop.lat, lng: stop.lng });
+      }
+      continue;
+    }
 
     if (estimate.etaChain?.length) {
       const boardingStopId = estimate.boardingStop?.stopId;
@@ -459,6 +654,17 @@ function applyLightweightFocusEtaUpdate(results) {
       }
       estimate.etaChain = sanitizeEtaChain(estimate.etaChain);
     }
+
+    const predicted = predictedCumForEstimate(estimate, nowMs);
+    if (predicted != null && startBusReposition(estimate, predicted)) {
+      startedReposition = true;
+    }
+  }
+
+  if (needsHandoff) {
+    refreshFocusedEstimate({ refreshUpstream: true });
+  } else if (startedReposition && !animFrame) {
+    startBusAnimations(focusEstimates, focusToken);
   }
 }
 
@@ -529,6 +735,7 @@ function routesFromEstimates(ids, estimatesById) {
       colorIndex,
       boardingStop: estimate?.boardingStop ?? null,
       busLatLng: estimate?.busLatLng ?? null,
+      busAppearing: Boolean(estimate?.busAppearing),
       polyline: estimate?.polyline ?? [],
       routePolyline: estimate?.routePolyline ?? [],
       stops: estimate?.stops ?? [],
@@ -686,20 +893,57 @@ async function refreshFocusedEstimate({ refreshUpstream = true } = {}) {
             refreshUpstream,
           });
           const prior = focusEstimates.get(id);
-          if (
-            !estimate?.busLatLng &&
+          const sameBus =
             prior?.busLatLng &&
-            estimate?.reason !== "no-eta"
+            estimate &&
+            !estimate.busChanged &&
+            estimate.reason !== "no-eta";
+
+          // Preserve tracking clock when snapshot is unchanged so a timed
+          // full refresh does not rewind trackingNowMs.
+          if (
+            sameBus &&
+            prior.snapshotMs != null &&
+            estimate.snapshotMs === prior.snapshotMs &&
+            prior.receivedAtMs != null
           ) {
-            return [
-              id,
-              {
-                ...estimate,
-                busLatLng: prior.busLatLng,
-                busCumDist: prior.busCumDist ?? estimate.busCumDist,
-                speedMPerMin: estimate.speedMPerMin ?? prior.speedMPerMin,
-              },
-            ];
+            estimate.receivedAtMs = prior.receivedAtMs;
+          }
+
+          // Same bus: keep marker at prior spot and animate along the route
+          // to the new prediction (forward or capped back) instead of teleporting.
+          if (
+            sameBus &&
+            prior.busCumDist != null &&
+            estimate.busCumDist != null
+          ) {
+            const rawTargetCum = estimate.busCumDist;
+            const rawTargetLatLng = estimate.busLatLng;
+            estimate.progressHighWaterCum = prior.progressHighWaterCum;
+            estimate.busCumDist = prior.busCumDist;
+            estimate.busLatLng = prior.busLatLng;
+            bumpProgressHighWater(estimate);
+            const targetCum = Math.max(
+              trackingFloor(estimate),
+              rawTargetCum
+            );
+            let targetLatLng = rawTargetLatLng;
+            if (targetCum !== rawTargetCum && estimate.polyline?.length) {
+              const p = pointAtCumDist(estimate.polyline, targetCum);
+              if (p) targetLatLng = { lat: p.lat, lng: p.lng };
+            }
+            if (!startBusReposition(estimate, targetCum) && targetLatLng) {
+              estimate.busCumDist = targetCum;
+              estimate.busLatLng = targetLatLng;
+              bumpProgressHighWater(estimate);
+            }
+          } else if (sameBus && !estimate.busLatLng && prior.busLatLng) {
+            estimate.busLatLng = prior.busLatLng;
+            estimate.busCumDist = prior.busCumDist;
+            estimate.progressHighWaterCum = prior.progressHighWaterCum;
+            bumpProgressHighWater(estimate);
+            estimate.speedMPerMin =
+              estimate.speedMPerMin ?? prior.speedMPerMin;
           }
           return [id, estimate];
         } catch {
@@ -710,7 +954,46 @@ async function refreshFocusedEstimate({ refreshUpstream = true } = {}) {
 
     if (token !== focusToken || selectionKey() !== key) return;
 
-    const estimatesById = new Map(estimates.filter(([, e]) => e));
+    const dissolveIds = [];
+    const appearIds = new Set();
+    for (const [id, estimate] of estimates) {
+      if (!estimate) continue;
+      const prior = focusEstimates.get(id);
+      if (!prior?.busLatLng) {
+        if (estimate.busChanged && estimate.busLatLng) appearIds.add(id);
+        continue;
+      }
+      const cleared = !estimate.busLatLng;
+      // Dissolve only on true bus handoff — ETA revisions keep the marker.
+      const changed = Boolean(estimate.busChanged);
+      if (cleared || changed) {
+        dissolveIds.push(id);
+        if (estimate.busLatLng) appearIds.add(id);
+      }
+    }
+
+    if (dissolveIds.length) {
+      stopBusAnimation();
+      for (const id of dissolveIds) {
+        clearBusReposition(focusEstimates.get(id));
+      }
+      await Promise.all(dissolveIds.map((id) => dissolveBusMarker(id)));
+      if (token !== focusToken || selectionKey() !== key) return;
+    }
+
+    const estimatesById = new Map(
+      estimates
+        .filter(([, e]) => e)
+        .map(([id, estimate]) => [
+          id,
+          appearIds.has(id)
+            ? { ...estimate, busAppearing: true, busChanged: false }
+            : { ...estimate, busChanged: false },
+        ])
+    );
+    for (const estimate of estimatesById.values()) {
+      bumpProgressHighWater(estimate);
+    }
     focusEstimates = estimatesById;
     lastFocusFullRefreshAt = Date.now();
 
@@ -1064,8 +1347,13 @@ async function loadPickerForDirection(direction) {
     }
 
     addMapEl.classList.add("add-sheet__map--ready");
+    // Let flex give the map a real height before Leaflet measures it.
+    await yieldToPaint();
+    if (token !== addState.loadToken || !isAddSheetOpen()) return;
+
     const youLatLng = getLastPosition();
 
+    // Paint stops immediately; upgrade to OSRM road path when ready.
     await showPickerMap({
       stops,
       youLatLng,
@@ -1075,6 +1363,20 @@ async function loadPickerForDirection(direction) {
       },
       onPositionChange: onPositionChange,
     });
+
+    if (token !== addState.loadToken || !isAddSheetOpen()) return;
+
+    if (stops.length > 1) {
+      try {
+        const roadPath = await roadSnapStopsChunked(stops);
+        if (token !== addState.loadToken || !isAddSheetOpen()) return;
+        if (roadPath?.length > 1) {
+          setPickerPath(roadPath);
+        }
+      } catch (err) {
+        console.warn("Picker road snap failed:", err);
+      }
+    }
   } catch (err) {
     if (token !== addState.loadToken) return;
     setAddError(err.message || "Failed to load stops");

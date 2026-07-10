@@ -8,6 +8,7 @@ let routeLayers = new Map();
 /** @type {Map<string, { lat: number, lng: number, targetLat: number, targetLng: number }>} */
 let busChase = new Map();
 let busChaseFrame = null;
+let fitFrame = 0;
 let leafletReady = null;
 let themeObserver = null;
 let currentTheme = null;
@@ -134,16 +135,20 @@ export function stopDotIcon() {
   });
 }
 
-function busIcon(colorIndex = 0) {
+function busIcon(colorIndex = 0, { appearing = false } = {}) {
   const L = window.L;
   const palette = ROUTE_COLORS[colorIndex] ?? ROUTE_COLORS[0];
+  const appearClass = appearing ? " focus-marker--appearing" : "";
   return L.divIcon({
-    className: `focus-marker focus-marker--bus ${palette.busClass}`,
+    className: `focus-marker focus-marker--bus ${palette.busClass}${appearClass}`,
     html: `<span class="focus-marker__bus" aria-hidden="true"><span class="focus-marker__bus-body"></span></span>`,
     iconSize: [30, 30],
     iconAnchor: [15, 15],
   });
 }
+
+const BUS_DISSOLVE_MS = 620;
+const SAND_CHIP_COUNT = 20;
 
 function applyTileTheme(theme) {
   if (!map || !window.L) return;
@@ -269,7 +274,11 @@ function ensureBusChaseLoop() {
   busChaseFrame = requestAnimationFrame(tick);
 }
 
-function setBusMarkerPosition(routeId, busLatLng, { smooth = false } = {}) {
+function setBusMarkerPosition(
+  routeId,
+  busLatLng,
+  { smooth = false, dissolve = false, appear = false } = {}
+) {
   if (!map || panelEl().hidden) return;
   const layer = routeLayers.get(routeId);
   if (!layer) return;
@@ -278,8 +287,12 @@ function setBusMarkerPosition(routeId, busLatLng, { smooth = false } = {}) {
   if (!busLatLng) {
     busChase.delete(routeId);
     if (layer.busMarker) {
-      map.removeLayer(layer.busMarker);
-      layer.busMarker = null;
+      if (dissolve) {
+        dissolveBusMarkerElement(layer, routeId);
+      } else {
+        map.removeLayer(layer.busMarker);
+        layer.busMarker = null;
+      }
     }
     if (busChase.size === 0) stopBusChase();
     return;
@@ -287,7 +300,7 @@ function setBusMarkerPosition(routeId, busLatLng, { smooth = false } = {}) {
 
   if (!layer.busMarker) {
     layer.busMarker = L.marker([busLatLng.lat, busLatLng.lng], {
-      icon: busIcon(layer.colorIndex),
+      icon: busIcon(layer.colorIndex, { appearing: appear }),
       title: "Approx. bus location",
       zIndexOffset: 400,
     }).addTo(map);
@@ -297,8 +310,14 @@ function setBusMarkerPosition(routeId, busLatLng, { smooth = false } = {}) {
       targetLat: busLatLng.lat,
       targetLng: busLatLng.lng,
     });
+    // Bus often appears after the first paint — frame you + stop + bus.
+    scheduleFitToMarkers({ includeYou: routeLayers.size < 2 });
     return;
   }
+
+  // Dissolve owns the marker until timeout removal — do not move it.
+  const el = layer.busMarker.getElement?.() ?? layer.busMarker._icon;
+  if (el?.classList?.contains("focus-marker--dissolving")) return;
 
   if (!smooth) {
     busChase.set(routeId, {
@@ -327,6 +346,55 @@ function setBusMarkerPosition(routeId, busLatLng, { smooth = false } = {}) {
   ensureBusChaseLoop();
 }
 
+function dissolveBusMarkerElement(layer, routeId) {
+  const marker = layer.busMarker;
+  if (!marker || !map) return Promise.resolve();
+
+  busChase.delete(routeId);
+
+  const el = marker.getElement?.() ?? marker._icon;
+  if (!el) {
+    map.removeLayer(marker);
+    if (layer.busMarker === marker) layer.busMarker = null;
+    return Promise.resolve();
+  }
+
+  el.classList.add("focus-marker--dissolving");
+  const bus = el.querySelector(".focus-marker__bus");
+  if (bus && !bus.querySelector(".focus-marker__sand")) {
+    const sand = document.createElement("span");
+    sand.className = "focus-marker__sand";
+    sand.setAttribute("aria-hidden", "true");
+    for (let i = 0; i < SAND_CHIP_COUNT; i++) {
+      const chip = document.createElement("span");
+      chip.className = "focus-marker__sand-chip";
+      chip.style.setProperty("--sand-i", String(i));
+      sand.appendChild(chip);
+    }
+    bus.appendChild(sand);
+  }
+
+  return new Promise((resolve) => {
+    window.setTimeout(() => {
+      if (map && layer.busMarker === marker) {
+        map.removeLayer(marker);
+        layer.busMarker = null;
+      }
+      busChase.delete(routeId);
+      resolve();
+    }, BUS_DISSOLVE_MS);
+  });
+}
+
+/** Dissolve then remove the bus marker for a route. */
+export function dissolveBusMarker(routeId) {
+  if (!map || panelEl().hidden) return Promise.resolve();
+  const layer = routeLayers.get(routeId);
+  if (!layer?.busMarker) return Promise.resolve();
+  busChase.delete(routeId);
+  return dissolveBusMarkerElement(layer, routeId);
+}
+
 function clearOverlays() {
   if (!map) return;
   stopBusChase();
@@ -340,15 +408,22 @@ function clearOverlays() {
   routeLayers.clear();
 }
 
-function fitVisible(points) {
+function fitVisible(points, { animate = true } = {}) {
   if (!map || !points.length) return;
   const L = window.L;
+  map.invalidateSize({ animate: false });
   if (points.length === 1) {
-    map.setView([points[0].lat, points[0].lng], 15);
+    map.setView([points[0].lat, points[0].lng], 15, { animate });
     return;
   }
   const bounds = L.latLngBounds(points.map((p) => [p.lat, p.lng]));
-  map.fitBounds(bounds, { padding: [40, 40], maxZoom: 16 });
+  // Extra bottom pad clears zoom controls on the short 50dvh panel.
+  map.fitBounds(bounds, {
+    paddingTopLeft: [40, 40],
+    paddingBottomRight: [40, 64],
+    maxZoom: 16,
+    animate,
+  });
 }
 
 function collectMarkerPoints({ includeYou = true } = {}) {
@@ -362,8 +437,20 @@ function collectMarkerPoints({ includeYou = true } = {}) {
 }
 
 /** Refit the map to current stop / bus / you markers. */
-export function fitToMarkers({ includeYou = true } = {}) {
-  fitVisible(collectMarkerPoints({ includeYou }));
+export function fitToMarkers({ includeYou = true, animate = true } = {}) {
+  fitVisible(collectMarkerPoints({ includeYou }), { animate });
+}
+
+/** Fit after layout settles (panel open / marker paint). */
+function scheduleFitToMarkers({ includeYou = true, animate = true } = {}) {
+  if (fitFrame) cancelAnimationFrame(fitFrame);
+  fitFrame = requestAnimationFrame(() => {
+    fitFrame = requestAnimationFrame(() => {
+      fitFrame = 0;
+      if (!map || panelEl().hidden) return;
+      fitVisible(collectMarkerPoints({ includeYou }), { animate });
+    });
+  });
 }
 
 function paintRoute(route, theme, { dual = false } = {}) {
@@ -427,7 +514,7 @@ function paintRoute(route, theme, { dual = false } = {}) {
 
   if (busLatLng) {
     layer.busMarker = L.marker([busLatLng.lat, busLatLng.lng], {
-      icon: busIcon(colorIndex),
+      icon: busIcon(colorIndex, { appearing: Boolean(route.busAppearing) }),
       title: "Approx. bus location",
       zIndexOffset: 400,
     }).addTo(map);
@@ -462,7 +549,7 @@ function paintFocusRoutes(routes, { youLatLng = null, refit = true } = {}) {
   }
 
   if (refit) {
-    fitVisible(collectMarkerPoints({ includeYou: !dual }));
+    scheduleFitToMarkers({ includeYou: !dual });
   }
 }
 
@@ -477,7 +564,7 @@ export async function showFocusPanel({
 
   await ensureMap();
   await new Promise((r) => requestAnimationFrame(() => r()));
-  map.invalidateSize();
+  map.invalidateSize({ animate: false });
 
   paintFocusRoutes(routes, { youLatLng, refit });
 }
@@ -518,18 +605,26 @@ export function updateYouMarker(youLatLng, { refit = false } = {}) {
     }).addTo(map);
   }
   if (refit || isNew) {
-    fitToMarkers({ includeYou: true });
+    scheduleFitToMarkers({ includeYou: true });
   }
 }
 
-export function updateBusMarker(routeId, busLatLng, { smooth = false } = {}) {
-  setBusMarkerPosition(routeId, busLatLng, { smooth });
+export function updateBusMarker(
+  routeId,
+  busLatLng,
+  { smooth = false, dissolve = false, appear = false } = {}
+) {
+  setBusMarkerPosition(routeId, busLatLng, { smooth, dissolve, appear });
 }
 
 export function hideFocusPanel() {
   const panel = panelEl();
   panel.hidden = true;
   document.body.classList.remove("focus-active");
+  if (fitFrame) {
+    cancelAnimationFrame(fitFrame);
+    fitFrame = 0;
+  }
   clearOverlays();
 }
 

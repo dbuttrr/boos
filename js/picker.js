@@ -18,6 +18,11 @@ let themeObserver = null;
 let onSelectCallback = null;
 let selectedStopId = null;
 let unsubscribePosition = null;
+let fitFrame = 0;
+/** @type {object[]} */
+let lastStops = [];
+/** @type {{ lat: number, lng: number }|null} */
+let lastYouLatLng = null;
 
 const mapEl = () => document.getElementById("add-map");
 
@@ -68,19 +73,64 @@ function watchPickerTheme() {
   });
 }
 
-function fitPickerBounds(stops, youLatLng) {
-  if (!pickerMap || !stops.length) return;
+function fitPickerBounds({ animate = true } = {}) {
+  if (!pickerMap) return;
   const L = window.L;
-  const points = stops.map((s) => [s.lat, s.lng]);
-  if (youLatLng) {
-    points.push([youLatLng.lat, youLatLng.lng]);
+  pickerMap.invalidateSize({ animate: false });
+
+  let bounds = null;
+  if (routeLine) {
+    bounds = routeLine.getBounds();
+  } else if (lastStops.length) {
+    bounds = L.latLngBounds(lastStops.map((s) => [s.lat, s.lng]));
   }
-  if (points.length === 1) {
-    pickerMap.setView(points[0], 15);
+  if (!bounds || !bounds.isValid()) return;
+
+  if (lastYouLatLng) {
+    bounds.extend([lastYouLatLng.lat, lastYouLatLng.lng]);
+  }
+
+  if (bounds.getNorthEast().equals(bounds.getSouthWest())) {
+    pickerMap.setView(bounds.getCenter(), 15, { animate });
     return;
   }
-  const bounds = L.latLngBounds(points);
-  pickerMap.fitBounds(bounds, { padding: [48, 48], maxZoom: 16 });
+
+  pickerMap.fitBounds(bounds, {
+    paddingTopLeft: [48, 48],
+    paddingBottomRight: [48, 64],
+    maxZoom: 16,
+    animate,
+  });
+}
+
+/** Fit after layout settles; first fit uses animate:false so Leaflet has a view. */
+function scheduleFitPicker({ animate = true } = {}) {
+  if (fitFrame) cancelAnimationFrame(fitFrame);
+  fitFrame = requestAnimationFrame(() => {
+    fitFrame = requestAnimationFrame(() => {
+      fitFrame = 0;
+      if (!pickerMap) return;
+      fitPickerBounds({ animate });
+    });
+  });
+}
+
+function setRouteLineFromPath(path) {
+  if (!pickerMap || !window.L) return;
+  const L = window.L;
+  const theme = getAppTheme();
+  const points = (path ?? [])
+    .filter((p) => p && Number.isFinite(p.lat) && Number.isFinite(p.lng))
+    .map((p) => [p.lat, p.lng]);
+
+  if (routeLine) {
+    pickerMap.removeLayer(routeLine);
+    routeLine = null;
+  }
+
+  if (points.length > 1) {
+    routeLine = L.polyline(points, routeLineStyle(theme)).addTo(pickerMap);
+  }
 }
 
 function updateMarkerIcons() {
@@ -116,7 +166,7 @@ async function ensurePickerMap() {
   }
 
   pickerMap = L.map(mapEl(), {
-    zoomControl: true,
+    zoomControl: false,
     attributionControl: true,
   });
   pickerMap.attributionControl.setPrefix(false);
@@ -128,17 +178,31 @@ async function ensurePickerMap() {
 }
 
 /**
+ * Replace the route polyline (e.g. after OSRM road-snap) and refit.
+ * @param {{ lat: number, lng: number }[]} path
+ */
+export function setPickerPath(path) {
+  if (!pickerMap) return;
+  setRouteLineFromPath(path);
+  fitPickerBounds({ animate: false });
+  scheduleFitPicker({ animate: true });
+}
+
+/**
  * Show route stops on the picker map. Calls onSelect(stop) when user taps a stop.
- * @param {{ stops: object[], youLatLng?: object|null, onSelect?: Function, onPositionChange?: Function }} options
+ * @param {{ stops: object[], path?: object[], youLatLng?: object|null, onSelect?: Function, onPositionChange?: Function }} options
  */
 export async function showPickerMap({
   stops = [],
+  path = null,
   youLatLng = null,
   onSelect = null,
   onPositionChange = null,
 } = {}) {
   onSelectCallback = onSelect;
   selectedStopId = null;
+  lastStops = stops;
+  lastYouLatLng = youLatLng;
 
   if (unsubscribePosition) {
     unsubscribePosition();
@@ -147,17 +211,15 @@ export async function showPickerMap({
 
   await ensurePickerMap();
   await new Promise((r) => requestAnimationFrame(() => r()));
-  pickerMap.invalidateSize();
+  pickerMap.invalidateSize({ animate: false });
 
   clearPickerLayers();
   const L = window.L;
-  const theme = getAppTheme();
 
-  if (stops.length > 1) {
-    routeLine = L.polyline(
-      stops.map((s) => [s.lat, s.lng]),
-      routeLineStyle(theme)
-    ).addTo(pickerMap);
+  const linePath =
+    path?.length > 1 ? path : stops.length > 1 ? stops : null;
+  if (linePath) {
+    setRouteLineFromPath(linePath);
   }
 
   for (const stop of stops) {
@@ -190,6 +252,8 @@ export async function showPickerMap({
     unsubscribePosition = onPositionChange((pos) => {
       if (!pickerMap) return;
       if (pos) {
+        const isNew = !youMarker;
+        lastYouLatLng = pos;
         if (youMarker) {
           youMarker.setLatLng([pos.lat, pos.lng]);
         } else {
@@ -200,11 +264,17 @@ export async function showPickerMap({
             interactive: false,
           }).addTo(pickerMap);
         }
+        if (isNew) {
+          fitPickerBounds({ animate: false });
+          scheduleFitPicker({ animate: true });
+        }
       }
     });
   }
 
-  fitPickerBounds(stops, youLatLng);
+  // Immediate non-animated fit so the map has a view; then settle after layout.
+  fitPickerBounds({ animate: false });
+  scheduleFitPicker({ animate: true });
 }
 
 export function setPickerSelection(stopId) {
@@ -217,8 +287,14 @@ export function destroyPickerMap() {
     unsubscribePosition();
     unsubscribePosition = null;
   }
+  if (fitFrame) {
+    cancelAnimationFrame(fitFrame);
+    fitFrame = 0;
+  }
   onSelectCallback = null;
   selectedStopId = null;
+  lastStops = [];
+  lastYouLatLng = null;
   clearPickerLayers();
 
   if (pickerMap) {

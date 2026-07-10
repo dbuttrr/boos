@@ -95,3 +95,12 @@ export const DEFAULT_BUS_SPEED_M_PER_MIN = 250;
 
 /** Bus marker chase factor per frame toward target (0–1). */
 export const BUS_MARKER_LERP = 0.08;
+
+/** Duration to animate the bus along the route to a revised API prediction. */
+export const BUS_REPOSITION_MS = 1_200;
+
+/** Ignore prediction deltas smaller than this (meters) when starting a reposition. */
+export const BUS_REPOSITION_MIN_M = 5;
+
+/** Max meters a same-bus ETA revision may move the marker backward. */
+export const MAX_BUS_REWIND_M = 400;
