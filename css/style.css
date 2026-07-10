@@ -173,7 +173,7 @@ body {
   flex-direction: column;
   height: 48dvh;
   max-height: 48dvh;
-  border-radius: 1.25rem;
+  border-radius: 2rem;
   border: 1px solid var(--focus-glass-border);
   background: var(--watch-sheet-glass, var(--focus-glass));
   background-image: linear-gradient(
@@ -218,7 +218,7 @@ body {
   margin: 0;
   padding: 0;
   border: none;
-  border-radius: 1rem;
+  border-radius: 1.375rem;
   background: transparent;
   box-shadow: none;
   cursor: pointer;
@@ -245,7 +245,7 @@ body {
   margin: 0;
   padding: 0 0.4rem;
   border: none;
-  border-radius: 0.85rem;
+  border-radius: 1.125rem;
   background: var(--error);
   color: #fff;
   font-size: 0.8125rem;
@@ -283,7 +283,7 @@ body {
   padding: 0.75rem 0.875rem;
   margin: 0;
   border: 1px solid var(--row-glass-border);
-  border-radius: 1rem;
+  border-radius: 1.375rem;
   background: var(--row-glass);
   background-image: linear-gradient(
     135deg,
@@ -452,7 +452,7 @@ body {
   max-width: 10.25rem;
   margin-bottom: 5px;
   padding: 0.35rem 0.6rem;
-  border-radius: 0.55rem;
+  border-radius: 0.75rem;
   background: var(--focus-glass);
   border: 1px solid var(--focus-glass-border);
   box-shadow: var(--focus-shadow), inset 0 1px 0 var(--focus-glass-highlight);
@@ -573,7 +573,7 @@ body {
   flex-direction: column;
   flex: 1;
   margin: 0.5rem;
-  border-radius: 1.25rem;
+  border-radius: 2rem;
   border: 1px solid var(--focus-glass-border);
   background: var(--bg);
   background-image: var(--bg-wash);
@@ -777,7 +777,7 @@ body {
 .add-sheet__btn {
   flex: 1;
   padding: 0.75rem 1rem;
-  border-radius: 0.875rem;
+  border-radius: 1.125rem;
   font-size: 0.9375rem;
   font-weight: 600;
   cursor: pointer;
@@ -1201,7 +1201,7 @@ body.focus-active .header__subtitle {
   margin: 0;
   padding: 0;
   border: 1px solid var(--focus-glass-border);
-  border-radius: 0.75rem;
+  border-radius: 1rem;
   overflow: hidden;
   background: var(--focus-glass);
   background-image: linear-gradient(
