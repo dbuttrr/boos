@@ -14,6 +14,8 @@ let themeObserver = null;
 let currentTheme = null;
 /** Route focus overlays are painted (vs idle GPS-follow). */
 let focusActive = false;
+/** Add-flow stop picking on the main map. */
+let addPickActive = false;
 /** Recenter GPS into the top-half active area while idle. */
 let idleFollow = true;
 const IDLE_ZOOM = 15;
@@ -283,6 +285,9 @@ function applyTileTheme(theme) {
         approachLineStyle(theme, layer.colorIndex, { dual })
       );
     }
+  }
+  if (addPickRouteLine) {
+    addPickRouteLine.setStyle(addPickLineStyle(theme));
   }
 }
 
@@ -645,7 +650,7 @@ export function followYouInActiveArea(
   youLatLng,
   { animate = true, showMarker = true, force = false } = {}
 ) {
-  if (!map || !youLatLng || focusActive || !idleFollow) return;
+  if (!map || !youLatLng || focusActive || addPickActive || !idleFollow) return;
   const isNew = !youMarker;
   if (showMarker) ensureYouMarker(youLatLng);
   if (force || isNew || !isYouInFollowWindow(youLatLng)) {
@@ -843,4 +848,228 @@ export function isFocusPanelVisible() {
 
 export function isMapReady() {
   return Boolean(map);
+}
+
+let addPickRouteLine = null;
+/** @type {Map<string, any>} */
+let addPickStopMarkers = new Map();
+let addPickOnSelect = null;
+let addPickSelectedId = null;
+let addPickFitFrame = 0;
+let addPickUnsubscribePosition = null;
+/** @type {object[]} */
+let addPickStops = [];
+/** @type {{ lat: number, lng: number }|null} */
+let addPickYouLatLng = null;
+
+function addPickLineStyle(theme) {
+  return {
+    color: theme === "dark" ? "#58a6ff" : "#0969da",
+    weight: 3.5,
+    opacity: 0.7,
+    lineCap: "round",
+    lineJoin: "round",
+  };
+}
+
+function clearAddPickLayers() {
+  if (!map) return;
+  if (addPickRouteLine) {
+    map.removeLayer(addPickRouteLine);
+    addPickRouteLine = null;
+  }
+  for (const marker of addPickStopMarkers.values()) {
+    map.removeLayer(marker);
+  }
+  addPickStopMarkers.clear();
+  addPickSelectedId = null;
+}
+
+function updateAddPickMarkerIcons() {
+  for (const [stopId, marker] of addPickStopMarkers) {
+    const selected = stopId === addPickSelectedId;
+    marker.setIcon(selected ? stopIcon({ selected: true }) : stopDotIcon());
+    marker.setZIndexOffset(selected ? 250 : 100);
+  }
+}
+
+function collectAddPickPoints({ includeYou = true } = {}) {
+  const points = [];
+  for (const marker of addPickStopMarkers.values()) {
+    points.push(marker.getLatLng());
+  }
+  if (includeYou && youMarker) points.push(youMarker.getLatLng());
+  return points;
+}
+
+function fitAddPickBounds({ animate = true } = {}) {
+  const points = collectAddPickPoints({ includeYou: true });
+  if (!points.length && addPickYouLatLng) {
+    centerInActiveArea(addPickYouLatLng, IDLE_ZOOM, { animate });
+    return;
+  }
+  fitVisible(points, { animate });
+}
+
+function scheduleFitAddPick({ animate = true } = {}) {
+  if (addPickFitFrame) cancelAnimationFrame(addPickFitFrame);
+  addPickFitFrame = requestAnimationFrame(() => {
+    addPickFitFrame = requestAnimationFrame(() => {
+      addPickFitFrame = 0;
+      if (!map || !addPickActive) return;
+      fitAddPickBounds({ animate });
+    });
+  });
+}
+
+function setAddPickRouteLineFromPath(path) {
+  if (!map || !window.L) return;
+  const L = window.L;
+  const theme = getAppTheme();
+  const points = (path ?? [])
+    .filter((p) => p && Number.isFinite(p.lat) && Number.isFinite(p.lng))
+    .map((p) => [p.lat, p.lng]);
+
+  if (addPickRouteLine) {
+    map.removeLayer(addPickRouteLine);
+    addPickRouteLine = null;
+  }
+
+  if (points.length > 1) {
+    addPickRouteLine = L.polyline(points, addPickLineStyle(theme)).addTo(map);
+  }
+}
+
+/** True while the user is picking a boarding stop on the main map. */
+export function isAddPickActive() {
+  return addPickActive;
+}
+
+/**
+ * Paint route stops on the main map for add-flow. Calls onSelect(stop) on tap.
+ * @param {{ stops: object[], path?: object[], youLatLng?: object|null, onSelect?: Function, onPositionChange?: Function, isStale?: () => boolean }} options
+ */
+export async function enterAddPickMode({
+  stops = [],
+  path = null,
+  youLatLng = null,
+  onSelect = null,
+  onPositionChange = null,
+  isStale = () => false,
+} = {}) {
+  addPickOnSelect = onSelect;
+  addPickSelectedId = null;
+  addPickStops = stops;
+  addPickYouLatLng = youLatLng;
+
+  focusActive = false;
+  idleFollow = false;
+  addPickActive = true;
+  document.body.classList.remove("focus-active");
+  document.body.classList.add("add-pick-active");
+
+  await ensureMap();
+  if (isStale()) return;
+  await new Promise((r) => requestAnimationFrame(() => r()));
+  if (isStale()) return;
+  map.invalidateSize({ animate: false });
+
+  clearRouteOverlays();
+  clearAddPickLayers();
+  const L = window.L;
+
+  const linePath =
+    path?.length > 1 ? path : stops.length > 1 ? stops : null;
+  if (linePath) {
+    setAddPickRouteLineFromPath(linePath);
+  }
+
+  for (const stop of stops) {
+    const marker = L.marker([stop.lat, stop.lng], {
+      icon: stopDotIcon(),
+      title: stop.nameEn || "Stop",
+      zIndexOffset: 100,
+      interactive: true,
+    }).addTo(map);
+
+    marker.on("click", () => {
+      addPickSelectedId = stop.stopId;
+      updateAddPickMarkerIcons();
+      addPickOnSelect?.(stop);
+    });
+
+    addPickStopMarkers.set(stop.stopId, marker);
+  }
+
+  if (youLatLng) {
+    ensureYouMarker(youLatLng);
+  } else if (youMarker) {
+    map.removeLayer(youMarker);
+    youMarker = null;
+  }
+
+  if (onPositionChange) {
+    if (addPickUnsubscribePosition) {
+      addPickUnsubscribePosition();
+      addPickUnsubscribePosition = null;
+    }
+    addPickUnsubscribePosition = onPositionChange((pos) => {
+      if (!map || !addPickActive) return;
+      if (pos) {
+        const isNew = !youMarker;
+        addPickYouLatLng = pos;
+        ensureYouMarker(pos);
+        if (isNew) {
+          fitAddPickBounds({ animate: false });
+          scheduleFitAddPick({ animate: true });
+        }
+      }
+    });
+  }
+
+  fitAddPickBounds({ animate: false });
+  scheduleFitAddPick({ animate: true });
+}
+
+/** Replace the add-pick route polyline (e.g. after OSRM road-snap). */
+export function updateAddPickPath(path) {
+  if (!map || !addPickActive) return;
+  setAddPickRouteLineFromPath(path);
+  fitAddPickBounds({ animate: false });
+  scheduleFitAddPick({ animate: true });
+}
+
+export function setAddPickSelection(stopId) {
+  addPickSelectedId = stopId;
+  updateAddPickMarkerIcons();
+}
+
+/** Leave add-pick mode; resume idle GPS follow. */
+export function exitAddPickMode({ youLatLng = null } = {}) {
+  addPickActive = false;
+  idleFollow = true;
+  addPickOnSelect = null;
+  addPickSelectedId = null;
+  addPickStops = [];
+  addPickYouLatLng = null;
+  document.body.classList.remove("add-pick-active");
+
+  if (addPickFitFrame) {
+    cancelAnimationFrame(addPickFitFrame);
+    addPickFitFrame = 0;
+  }
+  if (addPickUnsubscribePosition) {
+    addPickUnsubscribePosition();
+    addPickUnsubscribePosition = null;
+  }
+
+  clearAddPickLayers();
+
+  if (youLatLng) {
+    ensureYouMarker(youLatLng);
+    centerInActiveArea(youLatLng, IDLE_ZOOM, { animate: true });
+  } else if (youMarker) {
+    map?.removeLayer(youMarker);
+    youMarker = null;
+  }
 }

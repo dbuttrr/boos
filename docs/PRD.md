@@ -21,9 +21,9 @@ Personal use: mobile, Hong Kong, checking ETAs before leaving home or office.
 
 ### Watchlist editing
 
-- Circular **+** (floating above the watch-sheet, no outer dock pill) opens add sheet: enter route → pick direction → tap stop on map. The sheet map is visible immediately (dimmed, non-interactive preview centered on you); choosing a direction undims it and enables stop picking. While **two or more** routes are focused, the same control becomes clear-all **×** (scale pulse + slight red tint); with zero or one focused it stays **+**.
-- Sheet paints immediately; route catalog stays in memory (idle-prefetched). Typing shows up to 8 prefix-matched suggestions — no full-route datalist in the DOM.
-- Map shows OSRM road-snapped route polyline (same as focus map), all stops on that direction, and your location when available; paints stop-to-stop first then upgrades the path; viewport auto-fits the full path.
+- Circular **+** (floating above the watch-sheet) starts an inline **add-flow** strip inside the watch-sheet (modeless — map and list stay visible). Steps: enter route → pick direction → tap stop on the **main map** → confirm. **+** becomes **×** while add-flow is active (tap to cancel). Back chevron steps backward through route / direction / picking / confirm. Watchlist rows are not interactive during add-flow. Success shows a short toast above the sheet. While **two or more** routes are focused, the same control becomes clear-all **×** (scale pulse + slight red tint); with zero or one focused it stays **+**.
+- Add-flow paints immediately; route catalog stays in memory (idle-prefetched). Typing shows up to 8 prefix-matched suggestions — no full-route datalist in the DOM.
+- Main map shows OSRM road-snapped route polyline (stop-to-stop first, then upgraded), all stops on that direction, and your location when available; viewport auto-fits the path above the watch-sheet.
 - Added routes persist in browser localStorage; `js/config.js` seeds the list on first visit.
 - Swipe a row left to reveal Delete (iOS-style); tap Delete and confirm to remove. Only one row can be open at a time; vertical list scroll is preserved via axis lock.
 

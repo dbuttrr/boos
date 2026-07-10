@@ -55,25 +55,36 @@ import {
   isFocusPanelVisible,
   followYouInActiveArea,
   prefetchLeaflet,
+  enterAddPickMode,
+  updateAddPickPath,
+  setAddPickSelection,
+  exitAddPickMode,
+  isAddPickActive,
 } from "./map.js";
-import { showPickerMap, setPickerPath, destroyPickerMap } from "./picker.js";
 import { roadSnapStopsChunked } from "./routing.js";
 
 const cardsEl = document.getElementById("cards");
 const lastRefreshEl = document.getElementById("last-refresh");
 const nextRefreshEl = document.getElementById("next-refresh");
-const addSheetEl = document.getElementById("add-sheet");
+const addFlowEl = document.getElementById("add-flow");
+const addFlowBackEl = document.getElementById("add-flow-back");
+const addFlowStepRouteEl = document.getElementById("add-flow-step-route");
+const addFlowStepDirectionEl = document.getElementById("add-flow-step-direction");
+const addFlowStepPickingEl = document.getElementById("add-flow-step-picking");
+const addFlowStepConfirmEl = document.getElementById("add-flow-step-confirm");
+const addFlowRouteSummaryEl = document.getElementById("add-flow-route-summary");
 const addRouteInputEl = document.getElementById("add-route-input");
 const addRouteSuggestionsEl = document.getElementById("add-route-suggestions");
 const addDirectionFieldsetEl = document.getElementById("add-direction-fieldset");
 const MAX_ROUTE_SUGGESTIONS = 8;
 const SUGGESTION_BLUR_MS = 150;
+const ADD_TOAST_MS = 2200;
 const addDirOutboundEl = document.getElementById("add-dir-outbound");
 const addDirInboundEl = document.getElementById("add-dir-inbound");
-const addSheetErrorEl = document.getElementById("add-sheet-error");
-const addSelectionLabelEl = document.getElementById("add-selection-label");
+const addFlowErrorEl = document.getElementById("add-flow-error");
+const addConfirmLabelEl = document.getElementById("add-confirm-label");
 const addConfirmBtnEl = document.getElementById("add-confirm-btn");
-const addMapEl = document.getElementById("add-map");
+const addToastEl = document.getElementById("add-toast");
 const SORT_DEBOUNCE_MS = 2_000;
 const SWIPE_ACTION_WIDTH = 76;
 const SWIPE_AXIS_THRESHOLD = 12;
@@ -101,12 +112,14 @@ let lastFocusFullRefreshAt = 0;
 let routeCatalog = [];
 let suggestionBlurTimer = null;
 let addState = {
+  step: "idle",
   route: "",
   direction: null,
   routeMeta: null,
   selectedStop: null,
   loadToken: 0,
 };
+let addToastTimer = null;
 let swipeState = null;
 let openSwipeRow = null;
 let suppressRowClick = false;
@@ -348,14 +361,21 @@ function setFocusedRows(ids) {
       `0 8px ${dark ? 28 : 24}px ${hexToRgba(hex, alpha.glow)}`
     );
   });
-  syncDockClearButton(ids.length > 1);
+  syncDockButton();
 }
 
-function syncDockClearButton(clearMode) {
+function syncDockButton() {
   const btn = document.getElementById("add-route-btn");
   if (!btn) return;
+  const clearMode = isAddFlowActive() || focusedIds.length > 1;
   btn.classList.toggle("nav-dock__add--clear", clearMode);
-  btn.setAttribute("aria-label", clearMode ? "Clear selection" : "Add route");
+  if (isAddFlowActive()) {
+    btn.setAttribute("aria-label", "Cancel adding route");
+  } else if (focusedIds.length > 1) {
+    btn.setAttribute("aria-label", "Clear selection");
+  } else {
+    btn.setAttribute("aria-label", "Add route");
+  }
 }
 
 function selectionKey(ids = focusedIds) {
@@ -935,7 +955,7 @@ function exitFocus() {
 }
 
 async function toggleFocus(entryId) {
-  if (isAddSheetOpen()) return;
+  if (isAddFlowActive()) return;
 
   const entry = watchlist.find((e) => e.id === entryId);
   if (!entry) return;
@@ -1158,7 +1178,7 @@ function renderRouteSuggestions(matches) {
     .map((r) => {
       const route = escapeHtml(r.route);
       const dest = escapeHtml(r.destEn || "");
-      return `<li role="option"><button type="button" class="add-sheet__suggestion" data-route="${route}">${route}<span class="add-sheet__suggestion-dest">${dest}</span></button></li>`;
+      return `<li role="option"><button type="button" class="add-flow__suggestion" data-route="${route}">${route}<span class="add-flow__suggestion-dest">${dest}</span></button></li>`;
     })
     .join("");
   addRouteSuggestionsEl.hidden = false;
@@ -1172,7 +1192,7 @@ async function updateRouteSuggestions(query) {
   }
 
   await prefetchRouteCatalog();
-  if (!isAddSheetOpen()) return;
+  if (!isAddFlowActive()) return;
 
   const matches = [];
   for (const r of routeCatalog) {
@@ -1286,45 +1306,46 @@ function startAutoRefresh() {
 
 function setAddError(message) {
   if (!message) {
-    addSheetErrorEl.hidden = true;
-    addSheetErrorEl.textContent = "";
+    addFlowErrorEl.hidden = true;
+    addFlowErrorEl.textContent = "";
     return;
   }
-  addSheetErrorEl.hidden = false;
-  addSheetErrorEl.textContent = message;
+  addFlowErrorEl.hidden = false;
+  addFlowErrorEl.textContent = message;
 }
 
-function updateAddConfirmState() {
-  const stop = addState.selectedStop;
-  if (!stop || !addState.route || !addState.direction) {
+function updateConfirmLabel() {
+  const { route, direction, routeMeta, selectedStop } = addState;
+  if (!route || !direction || !selectedStop) {
+    addConfirmLabelEl.textContent = "";
     addConfirmBtnEl.disabled = true;
-    addSelectionLabelEl.textContent = "";
     return;
   }
 
   const duplicate = hasEntry(watchlist, {
-    route: addState.route,
-    stopId: stop.stopId,
-    direction: addState.direction,
+    route,
+    stopId: selectedStop.stopId,
+    direction,
   });
 
   if (duplicate) {
     addConfirmBtnEl.disabled = true;
-    addSelectionLabelEl.textContent = `${stop.nameEn} — already on your list`;
+    addConfirmLabelEl.textContent = `${selectedStop.nameEn} — already on your list`;
     return;
   }
 
   addConfirmBtnEl.disabled = false;
-  addSelectionLabelEl.textContent = stop.nameEn;
+  const dest = routeDestForDirection(routeMeta, direction);
+  addConfirmLabelEl.textContent = `${route} toward ${dest} · ${selectedStop.nameEn}`;
 }
 
 function setDirectionButtons(direction) {
   addDirOutboundEl.classList.toggle(
-    "add-sheet__dir-btn--active",
+    "add-flow__dir-btn--active",
     direction === "O"
   );
   addDirInboundEl.classList.toggle(
-    "add-sheet__dir-btn--active",
+    "add-flow__dir-btn--active",
     direction === "I"
   );
 }
@@ -1339,8 +1360,29 @@ function updateDirectionLabels(meta) {
   addDirInboundEl.textContent = `${meta.destEn} → ${meta.origEn}`;
 }
 
+function paintAddFlowStep() {
+  const step = addState.step;
+  addFlowStepRouteEl.hidden = step !== "route";
+  addFlowStepDirectionEl.hidden = step !== "direction";
+  addFlowStepPickingEl.hidden = step !== "picking";
+  addFlowStepConfirmEl.hidden = step !== "confirm";
+  addFlowBackEl.hidden = step === "route" || step === "idle";
+
+  if (step === "direction" && addState.route) {
+    addFlowRouteSummaryEl.textContent = addState.route;
+  }
+
+  document.body.classList.toggle("add-flow-active", step !== "idle");
+  syncDockButton();
+}
+
+function isAddFlowActive() {
+  return addState.step !== "idle";
+}
+
 function resetAddState() {
   addState = {
+    step: "idle",
     route: "",
     direction: null,
     routeMeta: null,
@@ -1349,56 +1391,95 @@ function resetAddState() {
   };
   addRouteInputEl.value = "";
   hideRouteSuggestions();
-  addDirectionFieldsetEl.disabled = true;
   setDirectionButtons(null);
   updateDirectionLabels(null);
-  addMapEl.classList.remove("add-sheet__map--ready", "add-sheet__map--dimmed");
-  destroyPickerMap();
+  if (isAddPickActive()) {
+    exitAddPickMode({ youLatLng: getLastPosition() });
+  }
   setAddError("");
-  updateAddConfirmState();
+  updateConfirmLabel();
+  addFlowEl.hidden = true;
+  paintAddFlowStep();
 }
 
-function isAddSheetOpen() {
-  return !addSheetEl.hidden;
-}
-
-function closeAddSheet() {
-  addSheetEl.hidden = true;
-  document.body.classList.remove("add-sheet-open");
+function cancelAddFlow() {
   resetAddState();
 }
 
-async function showAddMapPreview() {
-  if (!isAddSheetOpen()) return;
-  const token = addState.loadToken;
-  addMapEl.classList.add("add-sheet__map--ready", "add-sheet__map--dimmed");
-  await yieldToPaint();
-  if (!isAddSheetOpen() || token !== addState.loadToken) return;
-  await showPickerMap({
-    stops: [],
-    youLatLng: getLastPosition() ?? LOCATION,
-    isStale: () => token !== addState.loadToken || !isAddSheetOpen(),
+function showAddToast(message) {
+  if (!addToastEl) return;
+  if (addToastTimer) {
+    clearTimeout(addToastTimer);
+    addToastTimer = null;
+  }
+  addToastEl.textContent = message;
+  addToastEl.hidden = false;
+  addToastEl.classList.remove("add-toast--visible");
+  requestAnimationFrame(() => {
+    addToastEl.classList.add("add-toast--visible");
   });
+  addToastTimer = window.setTimeout(() => {
+    addToastEl.classList.remove("add-toast--visible");
+    addToastTimer = window.setTimeout(() => {
+      addToastEl.hidden = true;
+      addToastTimer = null;
+    }, 250);
+  }, ADD_TOAST_MS);
 }
 
-async function openAddSheet() {
+async function startAddFlow() {
   closeAllSwipeRows();
   if (isFocusPanelVisible()) {
     exitFocus();
   }
 
   resetAddState();
-  addSheetEl.hidden = false;
-  document.body.classList.add("add-sheet-open");
+  addState.step = "route";
+  addFlowEl.hidden = false;
+  paintAddFlowStep();
 
-  // Let the sheet paint before focus / catalog work.
   await yieldToPaint();
-  if (!isAddSheetOpen()) return;
+  if (!isAddFlowActive()) return;
 
   addRouteInputEl.focus();
   startGeolocation();
   prefetchRouteCatalog();
-  await showAddMapPreview();
+}
+
+function goBackAddFlow() {
+  if (addState.step === "confirm") {
+    addState.step = "picking";
+    addState.selectedStop = null;
+    setAddPickSelection(null);
+    setAddError("");
+    updateConfirmLabel();
+    paintAddFlowStep();
+    return;
+  }
+
+  if (addState.step === "picking") {
+    addState.direction = null;
+    addState.selectedStop = null;
+    exitAddPickMode({ youLatLng: getLastPosition() });
+    addState.step = "direction";
+    setDirectionButtons(null);
+    setAddError("");
+    paintAddFlowStep();
+    return;
+  }
+
+  if (addState.step === "direction") {
+    addState.route = "";
+    addState.routeMeta = null;
+    addState.direction = null;
+    addRouteInputEl.value = "";
+    hideRouteSuggestions();
+    updateDirectionLabels(null);
+    addState.step = "route";
+    setAddError("");
+    paintAddFlowStep();
+    addRouteInputEl.focus();
+  }
 }
 
 async function validateAndLoadRoute(routeValue) {
@@ -1410,50 +1491,54 @@ async function validateAndLoadRoute(routeValue) {
     addState.routeMeta = null;
     addState.direction = null;
     addState.selectedStop = null;
-    addDirectionFieldsetEl.disabled = true;
+    addState.step = "route";
     setDirectionButtons(null);
     updateDirectionLabels(null);
     setAddError("");
-    updateAddConfirmState();
-    if (isAddSheetOpen()) await showAddMapPreview();
+    updateConfirmLabel();
+    paintAddFlowStep();
     return;
   }
 
   setAddError("");
   try {
     const meta = await fetchRouteMeta(route);
+    if (!isAddFlowActive()) return;
     addState.route = meta.route;
     addState.routeMeta = meta;
     addState.direction = null;
     addState.selectedStop = null;
-    addDirectionFieldsetEl.disabled = false;
+    addState.step = "direction";
     updateDirectionLabels(meta);
     setDirectionButtons(null);
-    updateAddConfirmState();
-    if (isAddSheetOpen()) await showAddMapPreview();
+    updateConfirmLabel();
+    paintAddFlowStep();
   } catch {
+    if (!isAddFlowActive()) return;
     addState.route = "";
     addState.routeMeta = null;
     addState.direction = null;
     addState.selectedStop = null;
-    addDirectionFieldsetEl.disabled = true;
+    addState.step = "route";
     setDirectionButtons(null);
     updateDirectionLabels(null);
     setAddError(`Route ${route} not found`);
-    updateAddConfirmState();
-    if (isAddSheetOpen()) await showAddMapPreview();
+    updateConfirmLabel();
+    paintAddFlowStep();
   }
 }
 
-async function loadPickerForDirection(direction) {
+async function loadAddPickForDirection(direction) {
   if (!addState.route || !direction) return;
 
   const token = ++addState.loadToken;
   addState.direction = direction;
   addState.selectedStop = null;
+  addState.step = "picking";
   setDirectionButtons(direction);
   setAddError("");
-  updateAddConfirmState();
+  updateConfirmLabel();
+  paintAddFlowStep();
 
   try {
     const routeStops = await fetchRouteStops(addState.route, direction);
@@ -1461,48 +1546,52 @@ async function loadPickerForDirection(direction) {
     if (token !== addState.loadToken) return;
 
     if (!stops.length) {
+      addState.step = "direction";
       setAddError("No stops found for this direction");
-      if (isAddSheetOpen()) await showAddMapPreview();
+      paintAddFlowStep();
       return;
     }
 
-    addMapEl.classList.add("add-sheet__map--ready");
-    addMapEl.classList.remove("add-sheet__map--dimmed");
-    // Let flex give the map a real height before Leaflet measures it.
     await yieldToPaint();
-    if (token !== addState.loadToken || !isAddSheetOpen()) return;
+    if (token !== addState.loadToken || !isAddFlowActive()) return;
 
     const youLatLng = getLastPosition();
 
-    // Paint stops immediately; upgrade to OSRM road path when ready.
-    await showPickerMap({
+    await enterAddPickMode({
       stops,
       youLatLng,
       onSelect: (stop) => {
+        if (token !== addState.loadToken || addState.step !== "picking") return;
         addState.selectedStop = stop;
-        updateAddConfirmState();
+        setAddPickSelection(stop.stopId);
+        addState.step = "confirm";
+        setAddError("");
+        updateConfirmLabel();
+        paintAddFlowStep();
       },
-      onPositionChange: onPositionChange,
-      isStale: () => token !== addState.loadToken || !isAddSheetOpen(),
+      onPositionChange,
+      isStale: () => token !== addState.loadToken || !isAddFlowActive(),
     });
 
-    if (token !== addState.loadToken || !isAddSheetOpen()) return;
+    if (token !== addState.loadToken || !isAddFlowActive()) return;
 
     if (stops.length > 1) {
       try {
         const roadPath = await roadSnapStopsChunked(stops);
-        if (token !== addState.loadToken || !isAddSheetOpen()) return;
+        if (token !== addState.loadToken || !isAddFlowActive()) return;
         if (roadPath?.length > 1) {
-          setPickerPath(roadPath);
+          updateAddPickPath(roadPath);
         }
       } catch (err) {
-        console.warn("Picker road snap failed:", err);
+        console.warn("Add-pick road snap failed:", err);
       }
     }
   } catch (err) {
     if (token !== addState.loadToken) return;
+    addState.step = "direction";
     setAddError(err.message || "Failed to load stops");
-    if (isAddSheetOpen()) await showAddMapPreview();
+    exitAddPickMode({ youLatLng: getLastPosition() });
+    paintAddFlowStep();
   }
 }
 
@@ -1542,9 +1631,11 @@ async function confirmAddEntry() {
     lng: selectedStop.lng,
   });
 
-  closeAddSheet();
+  const toastMessage = `Added ${route} · ${selectedStop.nameEn}`;
+  cancelAddFlow();
   rebuildRows();
   await refreshAll();
+  showAddToast(toastMessage);
 
   const pos = getLastPosition();
   if (pos) {
@@ -1692,19 +1783,19 @@ document.addEventListener("themechange", () => {
 
 document.getElementById("add-route-btn")?.addEventListener("click", (event) => {
   event.stopPropagation();
+  if (isAddFlowActive()) {
+    cancelAddFlow();
+    return;
+  }
   if (focusedIds.length > 1) {
     exitFocus();
     return;
   }
-  openAddSheet();
+  startAddFlow();
 });
 
-document.getElementById("add-sheet-close")?.addEventListener("click", () => {
-  closeAddSheet();
-});
-
-document.getElementById("add-cancel-btn")?.addEventListener("click", () => {
-  closeAddSheet();
+addFlowBackEl?.addEventListener("click", () => {
+  goBackAddFlow();
 });
 
 addRouteInputEl?.addEventListener("input", () => {
@@ -1734,31 +1825,31 @@ addRouteInputEl?.addEventListener("keydown", (event) => {
 });
 
 addRouteSuggestionsEl?.addEventListener("pointerdown", (event) => {
-  const btn = event.target.closest(".add-sheet__suggestion");
+  const btn = event.target.closest(".add-flow__suggestion");
   if (!btn) return;
   event.preventDefault();
   selectRouteSuggestion(btn.dataset.route);
 });
 
 addDirOutboundEl?.addEventListener("click", () => {
-  loadPickerForDirection("O");
+  loadAddPickForDirection("O");
 });
 
 addDirInboundEl?.addEventListener("click", () => {
-  loadPickerForDirection("I");
+  loadAddPickForDirection("I");
 });
 
 addConfirmBtnEl?.addEventListener("click", () => {
   confirmAddEntry();
 });
 
-addSheetEl?.addEventListener("click", (event) => {
-  if (event.target === addSheetEl) {
-    closeAddSheet();
-  }
+addFlowEl?.addEventListener("click", (event) => {
+  event.stopPropagation();
 });
 
 cardsEl.addEventListener("click", (event) => {
+  if (isAddFlowActive()) return;
+
   const deleteBtn = event.target.closest(".row__delete");
   if (deleteBtn) {
     event.stopPropagation();
@@ -1791,6 +1882,7 @@ cardsEl.addEventListener("click", (event) => {
 });
 
 cardsEl.addEventListener("keydown", (event) => {
+  if (isAddFlowActive()) return;
   if (event.key !== "Enter" && event.key !== " ") return;
   const row = event.target.closest(".row");
   if (!row) return;
@@ -1801,7 +1893,7 @@ cardsEl.addEventListener("keydown", (event) => {
 
 cardsEl.addEventListener("pointerdown", (event) => {
   if (event.pointerType === "mouse" && event.button !== 0) return;
-  if (isAddSheetOpen()) return;
+  if (isAddFlowActive()) return;
 
   const deleteBtn = event.target.closest(".row__delete");
   if (deleteBtn) return;
@@ -1918,7 +2010,8 @@ document.getElementById("app").addEventListener("click", (event) => {
     event.target.closest("#map-stage") ||
     event.target.closest(".nav-dock") ||
     event.target.closest(".theme-toggle") ||
-    event.target.closest("#add-sheet")
+    event.target.closest("#add-flow") ||
+    event.target.closest(".add-toast")
   ) {
     return;
   }
@@ -1926,7 +2019,7 @@ document.getElementById("app").addEventListener("click", (event) => {
 });
 
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape" && isAddSheetOpen()) {
-    closeAddSheet();
+  if (event.key === "Escape" && isAddFlowActive()) {
+    cancelAddFlow();
   }
 });
