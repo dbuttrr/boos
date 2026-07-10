@@ -242,7 +242,6 @@ body {
   margin: 0;
   padding: 0 0.4rem;
   border: none;
-  /* Squircle-ish: continuous corner on all sides, inset by actions padding */
   border-radius: 0.85rem;
   background: var(--error);
   color: #fff;
@@ -253,7 +252,7 @@ body {
   opacity: var(--row-swipe-progress, 0);
   pointer-events: none;
   -webkit-tap-highlight-color: transparent;
-  transition: opacity 0.22s ease;
+  transition: opacity 0.2s ease;
 }
 
 .row--swiping .row__delete {
@@ -262,13 +261,13 @@ body {
 
 .row--swipe-open .row__delete {
   pointer-events: auto;
-  opacity: 1;
 }
 
 .row__delete:active {
   filter: brightness(0.92);
 }
 
+/* Visual card — match main `.row` chrome; no transform at rest so backdrop-filter stays true. */
 .row__slide {
   position: relative;
   z-index: 1;
@@ -277,7 +276,9 @@ body {
   justify-content: flex-start;
   gap: 0;
   width: 100%;
+  box-sizing: border-box;
   padding: 0.75rem 0.875rem;
+  margin: 0;
   border: 1px solid var(--row-glass-border);
   border-radius: 1rem;
   background: var(--row-glass);
@@ -289,11 +290,9 @@ body {
   box-shadow: var(--row-glass-shadow);
   backdrop-filter: blur(18px) saturate(1.35);
   -webkit-backdrop-filter: blur(18px) saturate(1.35);
-  transform: translateX(var(--row-swipe-x, 0px));
-  transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1),
-    background 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease,
-    opacity 0.2s ease;
-  will-change: transform;
+  cursor: pointer;
+  transition: opacity 0.2s ease, background 0.2s ease, box-shadow 0.2s ease,
+    transform 0.2s ease, border-color 0.2s ease;
   -webkit-tap-highlight-color: transparent;
 }
 
@@ -312,7 +311,7 @@ body {
 }
 
 .row:active:not(.row--swiping):not(.row--swipe-open) .row__slide {
-  transform: translateX(var(--row-swipe-x, 0px)) scale(0.985);
+  transform: scale(0.985);
 }
 
 .row--swiping,
@@ -320,20 +319,25 @@ body {
   touch-action: none;
 }
 
+.row--swiping .row__slide,
+.row--swipe-open .row__slide {
+  transform: translateX(var(--row-swipe-x, 0px));
+}
+
 .row--swiping .row__slide {
   transition: none;
 }
 
-.row--loading .row__slide {
+.row--loading {
   opacity: 0.5;
 }
 
 /* Beyond a definite 20-min walk — still selectable, just quieter. */
-.row--far .row__slide {
+.row--far {
   opacity: 0.42;
 }
 
-.row--far.row--focused .row__slide {
+.row--far.row--focused {
   opacity: 0.78;
 }
 

@@ -1562,11 +1562,44 @@ function setRowSwipeX(row, x) {
   return clamped;
 }
 
+function clearRowSwipeProps(row) {
+  row.style.removeProperty("--row-swipe-x");
+  row.style.removeProperty("--row-swipe-progress");
+}
+
 function closeSwipeRow(row) {
   if (!row) return;
-  row.classList.remove("row--swiping", "row--swipe-open");
-  row.style.setProperty("--row-swipe-x", "0px");
-  row.style.setProperty("--row-swipe-progress", "0");
+  const slide = row.querySelector(".row__slide");
+  const wasOpen =
+    row.classList.contains("row--swipe-open") ||
+    row.classList.contains("row--swiping");
+
+  row.classList.remove("row--swiping");
+
+  if (!wasOpen) {
+    row.classList.remove("row--swipe-open");
+    clearRowSwipeProps(row);
+    if (openSwipeRow === row) openSwipeRow = null;
+    return;
+  }
+
+  // Keep swipe-open so transform still applies while we animate back to 0.
+  row.classList.add("row--swipe-open");
+  setRowSwipeX(row, 0);
+
+  const finish = () => {
+    row.classList.remove("row--swipe-open", "row--swiping");
+    clearRowSwipeProps(row);
+    slide?.removeEventListener("transitionend", onEnd);
+    if (openSwipeRow === row) openSwipeRow = null;
+  };
+  const onEnd = (event) => {
+    if (event.target !== slide || event.propertyName !== "transform") return;
+    finish();
+  };
+  slide?.addEventListener("transitionend", onEnd);
+  setTimeout(finish, 280);
+
   if (openSwipeRow === row) openSwipeRow = null;
 }
 
@@ -1575,8 +1608,7 @@ function openRowSwipe(row) {
   if (openSwipeRow && openSwipeRow !== row) closeSwipeRow(openSwipeRow);
   row.classList.remove("row--swiping");
   row.classList.add("row--swipe-open");
-  row.style.setProperty("--row-swipe-x", `${-SWIPE_ACTION_WIDTH}px`);
-  row.style.setProperty("--row-swipe-progress", "1");
+  setRowSwipeX(row, -SWIPE_ACTION_WIDTH);
   openSwipeRow = row;
 }
 
