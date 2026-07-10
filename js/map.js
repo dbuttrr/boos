@@ -159,14 +159,47 @@ export function youIcon() {
   });
 }
 
-export function stopIcon({ selected = false } = {}) {
+function escapeHtml(text) {
+  return String(text)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+/** Wide icon box so a glass name label can sit above the pin tip. */
+const STOP_LABEL_ICON_W = 168;
+const STOP_LABEL_ICON_H = 58;
+
+/**
+ * Boarding / picker stop pin.
+ * Pass `label` in focus mode to show a glass name tooltip above the pin.
+ */
+export function stopIcon({
+  selected = false,
+  label = "",
+  colorIndex = 0,
+} = {}) {
   const L = window.L;
-  const modifier = selected ? " focus-marker--stop-selected" : "";
+  const name = typeof label === "string" ? label.trim() : "";
+  const hasLabel = Boolean(name);
+  const selectedMod = selected || hasLabel ? " focus-marker--stop-selected" : "";
+  const labeledMod = hasLabel ? " focus-marker--stop-labeled" : "";
+  const palette = ROUTE_COLORS[colorIndex] ?? ROUTE_COLORS[0];
+  const accent = getAppTheme() === "dark" ? palette.dark : palette.light;
+
+  const labelHtml = hasLabel
+    ? `<span class="focus-marker__stop-label" style="--stop-label-accent:${accent}"><span class="focus-marker__stop-label-text">${escapeHtml(name)}</span><span class="focus-marker__stop-label-caret" aria-hidden="true"></span></span>`
+    : "";
+
+  const width = hasLabel ? STOP_LABEL_ICON_W : 22;
+  const height = hasLabel ? STOP_LABEL_ICON_H : 30;
+
   return L.divIcon({
-    className: `focus-marker focus-marker--stop${modifier}`,
-    html: `<span class="focus-marker__stop" aria-hidden="true"><span class="focus-marker__stop-head"></span><span class="focus-marker__stop-stem"></span></span>`,
-    iconSize: [22, 30],
-    iconAnchor: [11, 28],
+    className: `focus-marker focus-marker--stop${selectedMod}${labeledMod}`,
+    html: `<span class="focus-marker__stop-wrap"${hasLabel ? ` style="--stop-label-accent:${accent}"` : ""}>${labelHtml}<span class="focus-marker__stop" aria-hidden="true"><span class="focus-marker__stop-head"></span><span class="focus-marker__stop-stem"></span></span></span>`,
+    iconSize: [width, height],
+    iconAnchor: [width / 2, height - 2],
   });
 }
 
@@ -245,7 +278,8 @@ function activeAreaPadding() {
   const size = map.getSize();
   const bottomInset = Math.round(size.y * 0.5);
   return {
-    paddingTopLeft: [40, 48],
+    // Extra top room for boarding-stop name labels above pins.
+    paddingTopLeft: [40, 72],
     paddingBottomRight: [40, bottomInset + 16],
   };
 }
@@ -597,7 +631,7 @@ export function followYouInActiveArea(
   }
 }
 
-function paintRoute(route, theme, { dual = false } = {}) {
+function paintRoute(route, theme, { dual = false, showStopLabel = true } = {}) {
   const L = window.L;
   const colorIndex = route.colorIndex ?? 0;
   const boardingStop = route.boardingStop;
@@ -606,6 +640,8 @@ function paintRoute(route, theme, { dual = false } = {}) {
   const routePolyline = route.routePolyline;
   const stops = route.stops ?? [];
   const busLatLng = route.busLatLng;
+  const stopName =
+    typeof boardingStop?.nameEn === "string" ? boardingStop.nameEn.trim() : "";
 
   const layer = {
     fullRouteLine: null,
@@ -649,10 +685,16 @@ function paintRoute(route, theme, { dual = false } = {}) {
   }
 
   if (boardingStop) {
+    const label = showStopLabel && stopName ? stopName : "";
     layer.stopMarker = L.marker([boardingStop.lat, boardingStop.lng], {
-      icon: stopIcon(),
-      title: boardingStop.nameEn || "Boarding stop",
-      zIndexOffset: 200,
+      icon: stopIcon({
+        selected: true,
+        label,
+        colorIndex,
+      }),
+      title: stopName || "Boarding stop",
+      zIndexOffset: label ? 280 : 200,
+      interactive: false,
     }).addTo(map);
   }
 
@@ -670,12 +712,14 @@ function paintRoute(route, theme, { dual = false } = {}) {
 /**
  * Paint one or more focused routes.
  * Always shows the you pin when youLatLng is provided; multi-select uses lower line opacity.
+ * Shared boarding stops only get one name label (first focused route wins).
  */
 function paintFocusRoutes(routes, { youLatLng = null, refit = true } = {}) {
   if (!map) return;
   const L = window.L;
   const theme = getAppTheme();
   const multi = routes.length >= 2;
+  const labeledStopIds = new Set();
 
   clearRouteOverlays();
   if (youMarker) {
@@ -685,7 +729,13 @@ function paintFocusRoutes(routes, { youLatLng = null, refit = true } = {}) {
 
   for (const route of routes) {
     if (!route?.id) continue;
-    routeLayers.set(route.id, paintRoute(route, theme, { dual: multi }));
+    const stopId = route.boardingStop?.stopId ?? route.boardingStop?.id;
+    const showStopLabel = Boolean(stopId) && !labeledStopIds.has(stopId);
+    if (showStopLabel) labeledStopIds.add(stopId);
+    routeLayers.set(
+      route.id,
+      paintRoute(route, theme, { dual: multi, showStopLabel })
+    );
   }
 
   if (youLatLng) {

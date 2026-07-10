@@ -724,7 +724,14 @@ async function loadEstimateForEntry(entry) {
     });
     return {
       ...estimate,
-      boardingStop: estimate.boardingStop ?? boardingStop,
+      boardingStop: estimate.boardingStop
+        ? {
+            ...boardingStop,
+            ...estimate.boardingStop,
+            nameEn:
+              estimate.boardingStop.nameEn || boardingStop?.nameEn || undefined,
+          }
+        : boardingStop,
     };
   } catch (err) {
     console.warn("Focus estimate failed:", err);
