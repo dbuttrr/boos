@@ -12,11 +12,6 @@
       <div id="map-stage" class="map-stage" aria-hidden="false">
         <div id="focus-map" class="map-stage__map" role="img" aria-label="Map"></div>
       </div>
-      <header class="header">
-        <div class="header__bar">
-          <p class="header__subtitle" id="last-refresh">Loading…</p>
-        </div>
-      </header>
       <nav class="nav-dock" aria-label="App controls">
         <button
           type="button"
@@ -88,6 +83,7 @@
         </button>
       </div>
       <div class="watch-sheet">
+        <p class="watch-sheet__status" id="last-refresh">Loading…</p>
         <section class="cards" id="cards" aria-live="polite"></section>
       </div>
       <div id="add-sheet" class="add-sheet" hidden aria-modal="true" role="dialog" aria-labelledby="add-sheet-title">
