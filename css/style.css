@@ -133,22 +133,20 @@ body {
 }
 
 /* Liquid-glass watchlist over the bottom half of the map.
-   Flush to the screen bottom (no map gap under the sheet); safe-area
-   is padding so content clears the home indicator. */
+   Equal inset on left/right/bottom (0.75rem); safe-area lifts the
+   sheet above the home indicator on notched devices. */
 .watch-sheet {
   position: fixed;
   left: 0.75rem;
   right: 0.75rem;
-  bottom: 0;
+  bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px));
   z-index: 20;
   display: flex;
   flex-direction: column;
   height: 48dvh;
   max-height: 48dvh;
-  padding-bottom: max(0.5rem, env(safe-area-inset-bottom, 0px));
-  border-radius: 2rem 2rem 0 0;
+  border-radius: 2rem;
   border: 1px solid var(--focus-glass-border);
-  border-bottom: none;
   background: var(--watch-sheet-glass, var(--focus-glass));
   background-image: linear-gradient(
     135deg,
@@ -356,7 +354,7 @@ body {
 
 /* Leaflet attribution on full-bleed map (above the watch-sheet) */
 .map-stage .leaflet-control-attribution {
-  margin: 0 0 calc(48dvh + 0.25rem) 0 !important;
+  margin: 0 0 calc(48dvh + 0.75rem + 0.75rem) 0 !important;
   padding: 0.15rem 0.4rem !important;
   background: var(--focus-glass) !important;
   color: var(--text-subtle) !important;
@@ -1095,7 +1093,9 @@ body.add-sheet-open .theme-toggle {
 .nav-dock {
   position: fixed;
   left: 50%;
-  bottom: calc(48dvh + 0.5rem);
+  bottom: calc(
+    env(safe-area-inset-bottom, 0px) + 0.75rem + 48dvh + 0.5rem
+  );
   z-index: 25;
   display: flex;
   align-items: center;
