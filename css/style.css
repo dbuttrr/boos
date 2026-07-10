@@ -1200,7 +1200,7 @@ body.focus-active .header__subtitle {
   width: 2rem;
   margin: 0;
   padding: 0;
-  border: 1px solid var(--focus-glass-border);
+  border: none;
   border-radius: 1rem;
   overflow: hidden;
   background: var(--watch-sheet-glass, var(--focus-glass));
@@ -1231,7 +1231,7 @@ body.focus-active .header__subtitle {
 }
 
 .theme-toggle__btn + .theme-toggle__btn {
-  border-top: 1px solid var(--focus-glass-border);
+  border-top: none;
 }
 
 .theme-toggle__btn:active {
