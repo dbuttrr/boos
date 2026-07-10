@@ -24,6 +24,7 @@ Use `block__element--modifier`:
 - Toggle theme via `data-theme` on `<html>`
 - Do not hardcode colors in CSS when a `--token` exists
 - Map route colors are the exception (`ROUTE_COLORS` in `map.js`)
+- Dark glass shadows stay light (`--focus-shadow` / `--row-glass-shadow` ~0.14–0.18 black); avoid heavy black halos over the map
 
 ## Mobile & a11y
 
