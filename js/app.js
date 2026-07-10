@@ -1575,23 +1575,26 @@ function closeSwipeRow(row) {
     row.classList.contains("row--swiping");
 
   row.classList.remove("row--swiping");
+  if (openSwipeRow === row) openSwipeRow = null;
 
   if (!wasOpen) {
     row.classList.remove("row--swipe-open");
     clearRowSwipeProps(row);
-    if (openSwipeRow === row) openSwipeRow = null;
     return;
   }
 
-  // Keep swipe-open so transform still applies while we animate back to 0.
+  // Keep swipe-open so transform still applies while we animate back to 0,
+  // then drop transform entirely so backdrop-filter matches main again.
   row.classList.add("row--swipe-open");
   setRowSwipeX(row, 0);
 
+  let finished = false;
   const finish = () => {
+    if (finished) return;
+    finished = true;
     row.classList.remove("row--swipe-open", "row--swiping");
     clearRowSwipeProps(row);
     slide?.removeEventListener("transitionend", onEnd);
-    if (openSwipeRow === row) openSwipeRow = null;
   };
   const onEnd = (event) => {
     if (event.target !== slide || event.propertyName !== "transform") return;
@@ -1599,8 +1602,6 @@ function closeSwipeRow(row) {
   };
   slide?.addEventListener("transitionend", onEnd);
   setTimeout(finish, 280);
-
-  if (openSwipeRow === row) openSwipeRow = null;
 }
 
 function openRowSwipe(row) {
