@@ -1178,7 +1178,7 @@ function renderRouteSuggestions(matches) {
     .map((r) => {
       const route = escapeHtml(r.route);
       const dest = escapeHtml(r.destEn || "");
-      return `<li role="option"><button type="button" class="add-flow__suggestion" data-route="${route}">${route}<span class="add-flow__suggestion-dest">${dest}</span></button></li>`;
+      return `<li role="option" class="add-flow__suggestion" data-route="${route}" tabindex="-1">${route}<span class="add-flow__suggestion-dest">${dest}</span></li>`;
     })
     .join("");
   addRouteSuggestionsEl.hidden = false;
@@ -1795,11 +1795,24 @@ addRouteInputEl?.addEventListener("keydown", (event) => {
   }
 });
 
+addRouteSuggestionsEl?.addEventListener("touchstart", () => {
+  if (suggestionBlurTimer) {
+    clearTimeout(suggestionBlurTimer);
+    suggestionBlurTimer = null;
+  }
+}, { passive: true });
+
 addRouteSuggestionsEl?.addEventListener("pointerdown", (event) => {
-  const btn = event.target.closest(".add-flow__suggestion");
-  if (!btn) return;
+  if (event.pointerType !== "mouse") return;
+  if (!event.target.closest(".add-flow__suggestion")) return;
+  // Keep mousedown from blurring the input before click; do not block touch scroll.
   event.preventDefault();
-  selectRouteSuggestion(btn.dataset.route);
+});
+
+addRouteSuggestionsEl?.addEventListener("click", (event) => {
+  const item = event.target.closest(".add-flow__suggestion");
+  if (!item) return;
+  selectRouteSuggestion(item.dataset.route);
 });
 
 addDirOutboundEl?.addEventListener("click", () => {

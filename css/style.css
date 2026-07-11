@@ -694,9 +694,7 @@ body {
   align-items: baseline;
   justify-content: space-between;
   gap: 0.75rem;
-  width: 100%;
   padding: 0.625rem 0.875rem;
-  border: none;
   border-bottom: 1px solid var(--border);
   background: transparent;
   color: var(--text);
@@ -708,7 +706,7 @@ body {
   -webkit-tap-highlight-color: transparent;
 }
 
-.add-flow__suggestions li:last-child .add-flow__suggestion {
+.add-flow__suggestions .add-flow__suggestion:last-child {
   border-bottom: none;
 }
 
