@@ -40,6 +40,9 @@ html {
   --row-focused-glow: 0 8px 24px rgba(9, 105, 218, 0.12);
   --glass-sheen: rgba(255, 255, 255, 0.22);
   --radius-watch-sheet: 2.625rem;
+  --watch-sheet-inset: 0.75rem;
+  --watch-sheet-height: 48dvh;
+  --add-anchor-gap: 1rem;
   --radius-row: 1.75rem;
   --radius-row-delete: 1.5rem;
   --focus-you: #0969da;
@@ -140,14 +143,14 @@ body {
    safe-area so the bottom gutter matches the sides. */
 .watch-sheet {
   position: fixed;
-  left: 0.75rem;
-  right: 0.75rem;
-  bottom: 0.75rem;
+  left: var(--watch-sheet-inset);
+  right: var(--watch-sheet-inset);
+  bottom: var(--watch-sheet-inset);
   z-index: 20;
   display: flex;
   flex-direction: column;
-  height: 48dvh;
-  max-height: 48dvh;
+  height: var(--watch-sheet-height);
+  max-height: var(--watch-sheet-height);
   border-radius: var(--radius-watch-sheet);
   border: 1px solid var(--focus-glass-border);
   background: var(--watch-sheet-glass, var(--focus-glass));
@@ -357,7 +360,8 @@ body {
 
 /* Leaflet attribution on full-bleed map (above the watch-sheet) */
 .map-stage .leaflet-control-attribution {
-  margin: 0 0 calc(48dvh + 0.75rem + 0.75rem) 0 !important;
+  margin: 0 0
+    calc(var(--watch-sheet-height) + var(--watch-sheet-inset) + 0.75rem) 0 !important;
   padding: 0.15rem 0.4rem !important;
   background: var(--focus-glass) !important;
   color: var(--text-subtle) !important;
@@ -554,34 +558,35 @@ body {
   gap: 0.75rem;
 }
 
-/* Add-route flow + floating + (above watch-sheet, outside the sheet) */
+/* Add-route flow + floating + (map overlay — never inside watch-sheet) */
 .add-anchor {
   position: fixed;
   left: 50%;
-  bottom: calc(0.75rem + 48dvh + 0.5rem);
-  z-index: 25;
+  bottom: calc(
+    var(--watch-sheet-inset) + var(--watch-sheet-height) + var(--add-anchor-gap)
+  );
+  z-index: 30;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.5rem;
-  width: min(22rem, calc(100% - 1.5rem));
+  gap: 0.625rem;
+  width: min(20rem, calc(100% - 2rem));
   transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.add-anchor > * {
+  pointer-events: auto;
 }
 
 .add-flow {
   width: 100%;
   padding: 0.75rem;
   border-radius: 1.375rem;
-  border: 1px solid var(--focus-glass-border);
-  background: var(--focus-glass);
-  background-image: linear-gradient(
-    135deg,
-    var(--focus-glass-highlight) 0%,
-    transparent 48%
-  );
-  box-shadow: var(--focus-shadow);
-  backdrop-filter: blur(20px) saturate(1.6);
-  -webkit-backdrop-filter: blur(20px) saturate(1.6);
+  border: 1px solid var(--border);
+  background: var(--bg);
+  background-image: var(--bg-wash);
+  box-shadow: 0 12px 32px rgba(15, 20, 25, 0.18);
 }
 
 .add-flow[hidden] {
@@ -661,8 +666,13 @@ body {
 }
 
 .add-flow__suggestions {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 0.375rem);
+  top: auto;
   list-style: none;
-  margin: 0.375rem 0 0;
+  margin: 0;
   padding: 0;
   border: 1px solid var(--border);
   border-radius: 1rem;
@@ -670,6 +680,7 @@ body {
   overflow: hidden;
   max-height: 10rem;
   overflow-y: auto;
+  box-shadow: 0 8px 24px rgba(15, 20, 25, 0.12);
 }
 
 .add-flow__suggestions[hidden] {
@@ -803,8 +814,11 @@ body {
 .add-toast {
   position: fixed;
   left: 50%;
-  bottom: calc(0.75rem + 48dvh + 3rem);
-  z-index: 30;
+  bottom: calc(
+    var(--watch-sheet-inset) + var(--watch-sheet-height) + var(--add-anchor-gap) +
+      2.75rem
+  );
+  z-index: 31;
   transform: translateX(-50%) translateY(0.5rem);
   max-width: calc(100% - 2rem);
   padding: 0.625rem 1rem;
@@ -840,8 +854,12 @@ body {
   display: none;
 }
 
-body.add-flow-active #cards {
+body.add-flow-active .watch-sheet {
   pointer-events: none;
+  opacity: 0.72;
+}
+
+body.add-flow-active #cards {
   opacity: 0.55;
 }
 
