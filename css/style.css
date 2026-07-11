@@ -668,13 +668,13 @@ body.add-menu-open .add-menu-backdrop {
 .add-menu {
   position: absolute;
   bottom: calc(var(--nav-add-size) + 0.625rem);
-  left: 50%;
+  left: 0;
+  right: 0;
   z-index: 4;
   display: flex;
   flex-direction: row;
-  align-items: center;
+  align-items: stretch;
   gap: 0.625rem;
-  transform: translateX(-50%);
   pointer-events: none;
 }
 
@@ -687,7 +687,9 @@ body.add-menu-open .add-menu {
 }
 
 .add-menu__choice {
-  padding: 0.6875rem 1.25rem;
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 0.6875rem 0.75rem;
   border: 1px solid var(--focus-glass-border);
   border-radius: 999px;
   background-color: var(--watch-sheet-glass, var(--focus-glass));
@@ -704,6 +706,7 @@ body.add-menu-open .add-menu {
   font-weight: 400;
   letter-spacing: 0.01em;
   line-height: 1.2;
+  text-align: center;
   white-space: nowrap;
   cursor: pointer;
   opacity: 0;
