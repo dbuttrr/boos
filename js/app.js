@@ -1157,6 +1157,7 @@ function hideRouteSuggestions() {
   }
   addRouteSuggestionsEl.hidden = true;
   addRouteSuggestionsEl.innerHTML = "";
+  addFlowEl?.classList.remove("add-flow--suggestions-open");
 }
 
 function escapeHtml(text) {
@@ -1181,6 +1182,7 @@ function renderRouteSuggestions(matches) {
     })
     .join("");
   addRouteSuggestionsEl.hidden = false;
+  addFlowEl?.classList.add("add-flow--suggestions-open");
 }
 
 async function updateRouteSuggestions(query) {
@@ -1760,14 +1762,24 @@ addRouteInputEl?.addEventListener("input", () => {
   updateRouteSuggestions(addRouteInputEl.value);
 });
 
+addRouteInputEl?.addEventListener("focus", () => {
+  if (suggestionBlurTimer) {
+    clearTimeout(suggestionBlurTimer);
+    suggestionBlurTimer = null;
+  }
+  if (addRouteInputEl.value.trim()) {
+    updateRouteSuggestions(addRouteInputEl.value);
+  }
+});
+
 addRouteInputEl?.addEventListener("change", () => {
   validateAndLoadRoute(addRouteInputEl.value);
 });
 
-addRouteInputEl?.addEventListener("blur", () => {
+addRouteInputEl?.addEventListener("focusout", (event) => {
+  if (event.relatedTarget?.closest?.(".add-flow__suggestion")) return;
   suggestionBlurTimer = setTimeout(() => {
     suggestionBlurTimer = null;
-    if (addRouteSuggestionsEl?.contains(document.activeElement)) return;
     hideRouteSuggestions();
     validateAndLoadRoute(addRouteInputEl.value);
   }, SUGGESTION_BLUR_MS);
@@ -1783,20 +1795,10 @@ addRouteInputEl?.addEventListener("keydown", (event) => {
   }
 });
 
-addRouteSuggestionsEl?.addEventListener("mousedown", (event) => {
-  event.preventDefault();
-});
-
-addRouteSuggestionsEl?.addEventListener("touchstart", (event) => {
+addRouteSuggestionsEl?.addEventListener("pointerdown", (event) => {
   const btn = event.target.closest(".add-flow__suggestion");
   if (!btn) return;
   event.preventDefault();
-  selectRouteSuggestion(btn.dataset.route);
-}, { passive: false });
-
-addRouteSuggestionsEl?.addEventListener("click", (event) => {
-  const btn = event.target.closest(".add-flow__suggestion");
-  if (!btn) return;
   selectRouteSuggestion(btn.dataset.route);
 });
 

@@ -600,6 +600,10 @@ body {
   overflow: visible;
 }
 
+.add-flow--suggestions-open {
+  z-index: 5;
+}
+
 .add-flow[hidden] {
   display: none;
 }
@@ -650,15 +654,18 @@ body {
 }
 
 .add-flow__suggestions {
+  position: absolute;
+  z-index: 50;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 0.375rem);
   list-style: none;
-  margin: 0.375rem 0 0;
+  margin: 0;
   padding: 0;
-  border: 1px solid var(--focus-glass-border);
+  border: 1px solid var(--border);
   border-radius: var(--radius-inner);
-  background: var(--row-glass);
-  backdrop-filter: blur(20px) saturate(1.5);
-  -webkit-backdrop-filter: blur(20px) saturate(1.5);
-  max-height: min(12rem, 32dvh);
+  background: var(--bg);
+  max-height: min(12rem, 28dvh);
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -666,7 +673,7 @@ body {
   -webkit-overflow-scrolling: touch;
   scrollbar-width: thin;
   scrollbar-color: var(--text-faint) transparent;
-  box-shadow: var(--row-glass-shadow);
+  box-shadow: var(--focus-shadow);
 }
 
 .add-flow__suggestions::-webkit-scrollbar {
