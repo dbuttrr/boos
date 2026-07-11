@@ -162,7 +162,7 @@ body {
 .watch-sheet,
 .add-flow {
   border: 1px solid var(--focus-glass-border);
-  background: var(--watch-sheet-glass, var(--focus-glass));
+  background-color: var(--watch-sheet-glass, var(--focus-glass));
   background-image: linear-gradient(
     135deg,
     var(--focus-glass-highlight) 0%,
@@ -759,7 +759,7 @@ body {
 
 .add-flow__direction-btns {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
   gap: 0.5rem;
 }
 
