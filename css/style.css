@@ -6,6 +6,7 @@
 
 html {
   -webkit-text-size-adjust: 100%;
+  background: var(--bg);
 }
 
 :root,
@@ -131,18 +132,21 @@ body {
 }
 
 /* Full-bleed Leaflet stage — active framing is the top half.
-   Bleed into the top safe area so the map runs under the PWA status bar. */
+   Keep the fixed stage background transparent: iOS 26 samples fixed
+   edge backgrounds for status-bar chrome; a grey fill becomes a grey bar.
+   Fallback color lives on html/body while tiles load. */
 .map-stage {
   position: fixed;
   inset: 0;
-  top: calc(-1 * env(safe-area-inset-top, 0px));
   z-index: 0;
-  background: var(--border);
+  background: transparent;
 }
 
-.map-stage__map {
+.map-stage__map,
+.map-stage .leaflet-container {
   width: 100%;
   height: 100%;
+  background: transparent !important;
 }
 
 /* Liquid-glass watchlist over the bottom half of the map.
@@ -823,7 +827,8 @@ body {
   color: var(--focus-accent);
 }
 
-/* Map-pick hint — fixed pill at top, matches watch-sheet status typography */
+/* Map-pick hint — fixed pill at top.
+   Glass on ::before so iOS does not sample fixed backdrop-filter for chrome. */
 .add-pick-hint {
   position: fixed;
   top: calc(env(safe-area-inset-top, 0px) + 0.75rem);
@@ -831,17 +836,10 @@ body {
   z-index: 25;
   margin: 0;
   padding: 0.4rem 0.875rem;
-  border: 1px solid var(--focus-glass-border);
+  border: 1px solid transparent;
   border-radius: 999px;
-  background-color: var(--watch-sheet-glass, var(--focus-glass));
-  background-image: linear-gradient(
-    135deg,
-    var(--focus-glass-highlight) 0%,
-    transparent 42%
-  );
-  box-shadow: var(--focus-shadow);
-  backdrop-filter: blur(22px) saturate(1.5);
-  -webkit-backdrop-filter: blur(22px) saturate(1.5);
+  background: transparent;
+  box-shadow: none;
   color: var(--text-subtle);
   font-size: 0.6875rem;
   font-weight: 500;
@@ -851,6 +849,24 @@ body {
   white-space: nowrap;
   pointer-events: none;
   transform: translateX(-50%);
+}
+
+.add-pick-hint::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  border: 1px solid var(--focus-glass-border);
+  background-color: var(--watch-sheet-glass, var(--focus-glass));
+  background-image: linear-gradient(
+    135deg,
+    var(--focus-glass-highlight) 0%,
+    transparent 42%
+  );
+  box-shadow: var(--focus-shadow);
+  backdrop-filter: blur(22px) saturate(1.5);
+  -webkit-backdrop-filter: blur(22px) saturate(1.5);
 }
 
 .add-pick-hint[hidden] {
@@ -1279,7 +1295,9 @@ body.add-flow-active .nav-dock__add--clear {
   }
 }
 
-/* Vertical sun/moon theme control — map top-right */
+/* Vertical sun/moon theme control — map top-right.
+   Glass lives on ::before (absolute): iOS 26 samples background /
+   backdrop-filter on the fixed element itself for status-bar tint. */
 .theme-toggle {
   position: fixed;
   top: calc(env(safe-area-inset-top, 0px) + 0.75rem);
@@ -1292,15 +1310,28 @@ body.add-flow-active .nav-dock__add--clear {
   padding: 0;
   border: none;
   border-radius: 1rem;
-  overflow: hidden;
+  overflow: visible;
+  background: transparent;
+  box-shadow: none;
+  transition: opacity 0.2s ease;
+}
+
+.theme-toggle::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
   background: var(--watch-sheet-glass, var(--focus-glass));
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.1);
   backdrop-filter: blur(16px) saturate(1.5);
   -webkit-backdrop-filter: blur(16px) saturate(1.5);
-  transition: opacity 0.2s ease;
+  pointer-events: none;
 }
 
 .theme-toggle__btn {
+  position: relative;
+  z-index: 1;
   box-sizing: border-box;
   display: grid;
   place-items: center;
