@@ -110,6 +110,8 @@ let lastFocusFullRefreshAt = 0;
 
 let routeCatalog = [];
 let suggestionBlurTimer = null;
+let suppressSuggestionBlur = false;
+let validateRouteToken = 0;
 let addState = {
   step: "idle",
   route: "",
@@ -1447,10 +1449,12 @@ async function startAddFlow() {
 }
 
 async function validateAndLoadRoute(routeValue) {
+  const token = ++validateRouteToken;
   const route = routeValue.trim().toUpperCase();
   hideRouteSuggestions();
 
   if (!route) {
+    if (token !== validateRouteToken || !isAddFlowActive()) return;
     addState.route = "";
     addState.routeMeta = null;
     addState.direction = null;
@@ -1467,7 +1471,7 @@ async function validateAndLoadRoute(routeValue) {
   setAddError("");
   try {
     const meta = await fetchRouteMeta(route);
-    if (!isAddFlowActive()) return;
+    if (token !== validateRouteToken || !isAddFlowActive()) return;
     addState.route = meta.route;
     addState.routeMeta = meta;
     addState.direction = null;
@@ -1478,7 +1482,7 @@ async function validateAndLoadRoute(routeValue) {
     updateConfirmLabel();
     paintAddFlowStep();
   } catch {
-    if (!isAddFlowActive()) return;
+    if (token !== validateRouteToken || !isAddFlowActive()) return;
     addState.route = "";
     addState.routeMeta = null;
     addState.direction = null;
@@ -1780,6 +1784,10 @@ addRouteInputEl?.addEventListener("focusout", (event) => {
   if (event.relatedTarget?.closest?.(".add-flow__suggestion")) return;
   suggestionBlurTimer = setTimeout(() => {
     suggestionBlurTimer = null;
+    if (suppressSuggestionBlur) {
+      suppressSuggestionBlur = false;
+      return;
+    }
     hideRouteSuggestions();
     validateAndLoadRoute(addRouteInputEl.value);
   }, SUGGESTION_BLUR_MS);
@@ -1795,23 +1803,33 @@ addRouteInputEl?.addEventListener("keydown", (event) => {
   }
 });
 
-addRouteSuggestionsEl?.addEventListener("touchstart", () => {
+addRouteSuggestionsEl?.addEventListener("touchstart", (event) => {
   if (suggestionBlurTimer) {
     clearTimeout(suggestionBlurTimer);
     suggestionBlurTimer = null;
   }
+  if (event.target.closest(".add-flow__suggestion")) {
+    suppressSuggestionBlur = true;
+  }
+}, { passive: true });
+
+addRouteSuggestionsEl?.addEventListener("touchmove", () => {
+  suppressSuggestionBlur = false;
 }, { passive: true });
 
 addRouteSuggestionsEl?.addEventListener("pointerdown", (event) => {
-  if (event.pointerType !== "mouse") return;
   if (!event.target.closest(".add-flow__suggestion")) return;
-  // Keep mousedown from blurring the input before click; do not block touch scroll.
-  event.preventDefault();
+  suppressSuggestionBlur = true;
+  if (event.pointerType === "mouse") {
+    // Keep mousedown from blurring the input before click; do not block touch scroll.
+    event.preventDefault();
+  }
 });
 
 addRouteSuggestionsEl?.addEventListener("click", (event) => {
   const item = event.target.closest(".add-flow__suggestion");
   if (!item) return;
+  suppressSuggestionBlur = false;
   selectRouteSuggestion(item.dataset.route);
 });
 
