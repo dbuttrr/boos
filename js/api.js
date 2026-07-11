@@ -22,9 +22,7 @@ const ROUTE_STOP_TTL_MS = 24 * 60 * 60 * 1000;
 const ROUTE_LIST_TTL_MS = 24 * 60 * 60 * 1000;
 const ROUTE_META_TTL_MS = 24 * 60 * 60 * 1000;
 const STOP_ROUTE_TTL_MS = 24 * 60 * 60 * 1000;
-const STOPS_INDEX_TTL_MS = 24 * 60 * 60 * 1000;
-const STOPS_INDEX_STORAGE_KEY = "bus:stops-index:CTB";
-const STOPS_INDEX_BATCH = 20;
+const STOPS_INDEX_URL = "data/stops-index.json";
 
 function parseIsoMs(iso) {
   if (!iso) return null;
@@ -387,83 +385,35 @@ export async function fetchStopRoutes(stopId) {
   return promise;
 }
 
-async function buildStopsIndex() {
-  const routes = await fetchRoutes();
-  const stopIds = new Set();
-
-  for (let i = 0; i < routes.length; i += STOPS_INDEX_BATCH) {
-    const batch = routes.slice(i, i + STOPS_INDEX_BATCH);
-    await Promise.all(
-      batch.map(async (item) => {
-        for (const direction of ["O", "I"]) {
-          try {
-            const routeStops = await fetchRouteStops(item.route, direction);
-            for (const rs of routeStops) {
-              stopIds.add(rs.stopId);
-            }
-          } catch {
-            // ignore per-route failures
-          }
-        }
-      })
-    );
-  }
-
-  const ids = [...stopIds];
-  const stops = [];
-
-  for (let i = 0; i < ids.length; i += STOPS_INDEX_BATCH) {
-    const batch = ids.slice(i, i + STOPS_INDEX_BATCH);
-    const resolved = await Promise.all(
-      batch.map(async (id) => {
-        try {
-          const stop = await fetchStop(id);
-          return {
-            stopId: stop.id,
-            nameEn: stop.nameEn,
-            lat: stop.lat,
-            lng: stop.lng,
-          };
-        } catch {
-          return null;
-        }
-      })
-    );
-    stops.push(...resolved.filter(Boolean));
-  }
-
-  return stops;
-}
-
 /**
- * CTB stop catalog with coords — built from route-stop lists, cached 24h.
+ * CTB stop catalog with coords — bundled static file (`data/stops-index.json`).
  */
 export async function ensureStopsIndex() {
   if (stopsIndexCache) {
     return stopsIndexCache;
   }
 
-  const stored = readCache(STOPS_INDEX_STORAGE_KEY, STOPS_INDEX_TTL_MS);
-  if (stored?.length) {
-    stopsIndexCache = stored;
-    return stored;
-  }
-
   if (stopsIndexInflight) {
     return stopsIndexInflight;
   }
 
-  stopsIndexInflight = buildStopsIndex()
-    .then((index) => {
-      stopsIndexCache = index;
-      writeCache(STOPS_INDEX_STORAGE_KEY, index);
-      stopsIndexInflight = null;
-      return index;
-    })
-    .catch((err) => {
-      stopsIndexInflight = null;
-      throw err;
-    });
+  stopsIndexInflight = (async () => {
+    const response = await fetch(STOPS_INDEX_URL);
+    if (!response.ok) {
+      throw new Error(`Stops index unavailable (HTTP ${response.status})`);
+    }
+    const payload = await response.json();
+    const stops = payload.stops ?? payload;
+    if (!Array.isArray(stops) || !stops.length) {
+      throw new Error("Stops index is empty");
+    }
+    stopsIndexCache = stops;
+    stopsIndexInflight = null;
+    return stops;
+  })().catch((err) => {
+    stopsIndexInflight = null;
+    throw err;
+  });
 
   return stopsIndexInflight;
 }

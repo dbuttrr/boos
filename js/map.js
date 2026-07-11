@@ -1035,8 +1035,7 @@ export async function enterAddPickMode({
   clearAddPickLayers();
   const L = window.L;
 
-  const linePath =
-    path?.length > 1 ? path : stops.length > 1 ? stops : null;
+  const linePath = path?.length > 1 ? path : null;
   if (linePath) {
     setAddPickRouteLineFromPath(linePath);
   }

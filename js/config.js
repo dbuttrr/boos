@@ -113,4 +113,4 @@ export const MAX_BUS_REWIND_M = 400;
 export const IDLE_FOLLOW_WINDOW = 0.45;
 
 /** Radius (meters) for nearby-stop discovery when adding a route. */
-export const NEARBY_STOP_RADIUS_M = 1000;
+export const NEARBY_STOP_RADIUS_M = 500;

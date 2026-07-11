@@ -1365,6 +1365,12 @@ function updateDirectionLabels(meta) {
   addDirInboundEl.textContent = `${meta.destEn} → ${meta.origEn}`;
 }
 
+function formatNearbyRadiusLabel() {
+  return NEARBY_STOP_RADIUS_M >= 1000
+    ? `${NEARBY_STOP_RADIUS_M / 1000} km`
+    : `${NEARBY_STOP_RADIUS_M} m`;
+}
+
 function filterNearbyStops(index, origin) {
   return index
     .map((stop) => ({
@@ -1542,7 +1548,7 @@ async function loadNearbyStops() {
     if (!nearby.length) {
       addState.step = "nearby-loading";
       if (addFlowNearbyStatusEl) {
-        addFlowNearbyStatusEl.textContent = `No stops within ${NEARBY_STOP_RADIUS_M / 1000} km`;
+        addFlowNearbyStatusEl.textContent = `No stops within ${formatNearbyRadiusLabel()}`;
       }
       setAddError("Try entering a route number instead");
       paintAddFlowStep();
