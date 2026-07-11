@@ -67,7 +67,6 @@ const cardsEl = document.getElementById("cards");
 const lastRefreshEl = document.getElementById("last-refresh");
 const nextRefreshEl = document.getElementById("next-refresh");
 const addFlowEl = document.getElementById("add-flow");
-const addFlowBackEl = document.getElementById("add-flow-back");
 const addFlowStepRouteEl = document.getElementById("add-flow-step-route");
 const addFlowStepDirectionEl = document.getElementById("add-flow-step-direction");
 const addFlowStepPickingEl = document.getElementById("add-flow-step-picking");
@@ -1366,7 +1365,6 @@ function paintAddFlowStep() {
   addFlowStepDirectionEl.hidden = step !== "direction";
   addFlowStepPickingEl.hidden = step !== "picking";
   addFlowStepConfirmEl.hidden = step !== "confirm";
-  addFlowBackEl.hidden = step === "route" || step === "idle";
 
   if (step === "direction" && addState.route) {
     addFlowRouteSummaryEl.textContent = addState.route;
@@ -1444,42 +1442,6 @@ async function startAddFlow() {
   addRouteInputEl.focus();
   startGeolocation();
   prefetchRouteCatalog();
-}
-
-function goBackAddFlow() {
-  if (addState.step === "confirm") {
-    addState.step = "picking";
-    addState.selectedStop = null;
-    setAddPickSelection(null);
-    setAddError("");
-    updateConfirmLabel();
-    paintAddFlowStep();
-    return;
-  }
-
-  if (addState.step === "picking") {
-    addState.direction = null;
-    addState.selectedStop = null;
-    exitAddPickMode({ youLatLng: getLastPosition() });
-    addState.step = "direction";
-    setDirectionButtons(null);
-    setAddError("");
-    paintAddFlowStep();
-    return;
-  }
-
-  if (addState.step === "direction") {
-    addState.route = "";
-    addState.routeMeta = null;
-    addState.direction = null;
-    addRouteInputEl.value = "";
-    hideRouteSuggestions();
-    updateDirectionLabels(null);
-    addState.step = "route";
-    setAddError("");
-    paintAddFlowStep();
-    addRouteInputEl.focus();
-  }
 }
 
 async function validateAndLoadRoute(routeValue) {

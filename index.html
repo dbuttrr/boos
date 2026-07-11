@@ -21,15 +21,6 @@
       <div class="add-anchor">
         <div id="add-flow" class="add-flow" hidden aria-live="polite">
           <div class="add-flow__bar">
-            <button
-              type="button"
-              id="add-flow-back"
-              class="add-flow__back"
-              hidden
-              aria-label="Back"
-            >
-              ‹
-            </button>
             <div class="add-flow__body">
               <div id="add-flow-step-route" class="add-flow__step">
                 <label class="add-flow__field">
@@ -54,8 +45,11 @@
               </div>
               <div id="add-flow-step-direction" class="add-flow__step" hidden>
                 <p class="add-flow__summary" id="add-flow-route-summary"></p>
-                <fieldset class="add-flow__direction" id="add-direction-fieldset">
-                  <legend class="add-flow__label">Direction</legend>
+                <fieldset
+                  class="add-flow__direction"
+                  id="add-direction-fieldset"
+                  aria-label="Direction"
+                >
                   <div class="add-flow__direction-btns">
                     <button
                       type="button"
