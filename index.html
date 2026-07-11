@@ -19,30 +19,31 @@
         <div id="focus-map" class="map-stage__map" role="img" aria-label="Map"></div>
       </div>
       <div class="add-anchor">
-        <div id="add-flow" class="add-flow" hidden aria-live="polite">
-          <div class="add-flow__bar">
-            <div class="add-flow__body">
-              <div id="add-flow-step-route" class="add-flow__step">
-                <div class="add-flow__field">
-                  <input
-                    type="text"
-                    id="add-route-input"
-                    class="add-flow__input"
-                    inputmode="text"
-                    autocomplete="off"
-                    placeholder="Enter a route e.g. 8X"
-                    aria-label="Enter a route e.g. 8X"
-                    aria-autocomplete="list"
-                    aria-controls="add-route-suggestions"
-                  />
-                  <ul
-                    id="add-route-suggestions"
-                    class="add-flow__suggestions"
-                    role="listbox"
-                    hidden
-                  ></ul>
+        <div class="add-flow-stack">
+          <ul
+            id="add-route-suggestions"
+            class="add-flow__suggestions"
+            role="listbox"
+            hidden
+          ></ul>
+          <div id="add-flow" class="add-flow" hidden aria-live="polite">
+            <div class="add-flow__bar">
+              <div class="add-flow__body">
+                <div id="add-flow-step-route" class="add-flow__step">
+                  <div class="add-flow__field">
+                    <input
+                      type="text"
+                      id="add-route-input"
+                      class="add-flow__input"
+                      inputmode="text"
+                      autocomplete="off"
+                      placeholder="Enter a route e.g. 8X"
+                      aria-label="Enter a route e.g. 8X"
+                      aria-autocomplete="list"
+                      aria-controls="add-route-suggestions"
+                    />
+                  </div>
                 </div>
-              </div>
               <div id="add-flow-step-direction" class="add-flow__step" hidden>
                 <p class="add-flow__summary" id="add-flow-route-summary"></p>
                 <fieldset
@@ -86,6 +87,7 @@
             </div>
           </div>
           <p class="add-flow__error" id="add-flow-error" hidden></p>
+        </div>
         </div>
         <nav class="nav-dock" aria-label="App controls">
           <button

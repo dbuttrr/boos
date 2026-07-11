@@ -591,17 +591,22 @@ body {
   pointer-events: auto;
 }
 
-.add-flow {
+.add-flow-stack {
   position: relative;
   z-index: 2;
+  width: 100%;
+}
+
+.add-flow-stack--suggestions-open {
+  z-index: 5;
+}
+
+.add-flow {
+  position: relative;
   width: 100%;
   padding: 0.75rem;
   border-radius: var(--radius-add-flow);
   overflow: visible;
-}
-
-.add-flow--suggestions-open {
-  z-index: 5;
 }
 
 .add-flow[hidden] {
@@ -679,6 +684,7 @@ body {
   scrollbar-width: thin;
   scrollbar-color: var(--text-faint) transparent;
   box-shadow: var(--focus-shadow);
+  /* Outside .add-flow so backdrop-filter blurs the map, not a nested glass layer. */
   backdrop-filter: blur(22px) saturate(1.5);
   -webkit-backdrop-filter: blur(22px) saturate(1.5);
 }

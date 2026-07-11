@@ -67,6 +67,7 @@ const cardsEl = document.getElementById("cards");
 const lastRefreshEl = document.getElementById("last-refresh");
 const nextRefreshEl = document.getElementById("next-refresh");
 const addFlowEl = document.getElementById("add-flow");
+const addFlowStackEl = document.querySelector(".add-flow-stack");
 const addFlowStepRouteEl = document.getElementById("add-flow-step-route");
 const addFlowStepDirectionEl = document.getElementById("add-flow-step-direction");
 const addFlowStepPickingEl = document.getElementById("add-flow-step-picking");
@@ -1160,7 +1161,7 @@ function hideRouteSuggestions() {
   }
   addRouteSuggestionsEl.hidden = true;
   addRouteSuggestionsEl.innerHTML = "";
-  addFlowEl?.classList.remove("add-flow--suggestions-open");
+  addFlowStackEl?.classList.remove("add-flow-stack--suggestions-open");
 }
 
 function escapeHtml(text) {
@@ -1185,7 +1186,7 @@ function renderRouteSuggestions(matches) {
     })
     .join("");
   addRouteSuggestionsEl.hidden = false;
-  addFlowEl?.classList.add("add-flow--suggestions-open");
+  addFlowStackEl?.classList.add("add-flow-stack--suggestions-open");
 }
 
 async function updateRouteSuggestions(query) {
