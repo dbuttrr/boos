@@ -6,6 +6,23 @@
 
 html {
   -webkit-text-size-adjust: 100%;
+  background: var(--border);
+}
+
+/* iOS Safari: bleed the map past the layout viewport so Liquid Glass chrome
+   samples map pixels instead of the page background (class set in map.js). */
+html.ios-viewport-bleed {
+  overflow-y: scroll;
+  overscroll-behavior-y: none;
+}
+
+html.ios-viewport-bleed body {
+  min-height: calc(100dvh + var(--safari-scroll-offset, 0px));
+  background: var(--border);
+}
+
+html.ios-viewport-bleed #app {
+  margin-top: var(--safari-scroll-offset, 0px);
 }
 
 :root,
@@ -128,6 +145,17 @@ body {
   inset: 0;
   z-index: 0;
   background: var(--border);
+}
+
+html.ios-viewport-bleed .map-stage {
+  top: calc(
+    -1 * (env(safe-area-inset-top, 0px) + var(--safari-scroll-offset, 0px))
+  );
+  right: calc(-1 * env(safe-area-inset-right, 0px));
+  bottom: calc(
+    -1 * (env(safe-area-inset-bottom, 0px) + var(--map-bleed-bottom, 0px))
+  );
+  left: calc(-1 * env(safe-area-inset-left, 0px));
 }
 
 .map-stage__map {

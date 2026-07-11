@@ -87,6 +87,64 @@ export const ROUTE_COLORS = [
 
 const mapEl = () => document.getElementById("focus-map");
 
+const SAFARI_SCROLL_OFFSET_PX = 62;
+const SAFARI_BOTTOM_BLEED_MIN_PX = 80;
+let viewportBleedReady = false;
+
+function isIOSWebKit() {
+  return (
+    /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1)
+  );
+}
+
+/** Extend the map stage on iOS Safari so toolbar chrome sees map tiles, not body bg. */
+function initSafariViewportBleed() {
+  if (viewportBleedReady || !isIOSWebKit()) return;
+  viewportBleedReady = true;
+
+  const root = document.documentElement;
+  root.classList.add("ios-viewport-bleed");
+  root.style.setProperty(
+    "--safari-scroll-offset",
+    `${SAFARI_SCROLL_OFFSET_PX}px`
+  );
+  root.style.setProperty(
+    "--map-bleed-bottom",
+    `${SAFARI_BOTTOM_BLEED_MIN_PX}px`
+  );
+
+  const syncBleed = () => {
+    const vv = window.visualViewport;
+    if (vv) {
+      const bottomGap = Math.max(
+        0,
+        window.innerHeight - vv.height - vv.offsetTop
+      );
+      root.style.setProperty(
+        "--map-bleed-bottom",
+        `${Math.max(SAFARI_BOTTOM_BLEED_MIN_PX, bottomGap)}px`
+      );
+    }
+    map?.invalidateSize({ animate: false });
+  };
+
+  const lockScrollOffset = () => {
+    if (Math.abs(window.scrollY - SAFARI_SCROLL_OFFSET_PX) > 1) {
+      window.scrollTo(0, SAFARI_SCROLL_OFFSET_PX);
+    }
+  };
+
+  syncBleed();
+  lockScrollOffset();
+  requestAnimationFrame(lockScrollOffset);
+
+  window.visualViewport?.addEventListener("resize", syncBleed);
+  window.visualViewport?.addEventListener("scroll", syncBleed);
+  window.addEventListener("resize", syncBleed);
+  window.addEventListener("scroll", lockScrollOffset, { passive: true });
+}
+
 function getAppTheme() {
   return document.documentElement.dataset.theme === "dark" ? "dark" : "light";
 }
@@ -377,6 +435,7 @@ export async function initMapStage({
   center = DEFAULT_CENTER,
   youLatLng = null,
 } = {}) {
+  initSafariViewportBleed();
   await ensureMap();
   await new Promise((r) => requestAnimationFrame(() => r()));
   map.invalidateSize({ animate: false });
