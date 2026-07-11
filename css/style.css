@@ -6,6 +6,7 @@
 
 html {
   -webkit-text-size-adjust: 100%;
+  background: var(--bg);
 }
 
 :root,
@@ -43,6 +44,11 @@ html {
   --watch-sheet-inset: 0.75rem;
   --watch-sheet-height: 48dvh;
   --add-anchor-gap: 1rem;
+  /* Layout viewport often excludes the home-indicator band under
+     black-translucent; subtract it so 0.75rem is from the physical edge. */
+  --watch-sheet-bottom: calc(
+    var(--watch-sheet-inset) - env(safe-area-inset-bottom, 0px)
+  );
   /* Inner cards (Find My–style rounded rects, not pills) */
   --radius-inner: 0.875rem;
   --radius-input: 0.75rem;
@@ -130,12 +136,17 @@ body {
   min-height: 100dvh;
 }
 
-/* Full-bleed Leaflet stage — active framing is the top half */
+/* Full-bleed Leaflet stage — active framing is the top half.
+   Transparent stage so iOS does not sample a grey fixed fill into the
+   translucent status bar; extend into the home-indicator band. */
 .map-stage {
   position: fixed;
-  inset: 0;
+  top: 0;
+  right: 0;
+  left: 0;
+  bottom: calc(0px - env(safe-area-inset-bottom, 0px));
   z-index: 0;
-  background: var(--border);
+  background: transparent;
 }
 
 .map-stage__map {
@@ -144,13 +155,14 @@ body {
 }
 
 /* Liquid-glass watchlist over the bottom half of the map.
-   Equal inset on left/right/bottom (0.75rem); ignores home-indicator
-   safe-area so the bottom gutter matches the sides. */
+   Equal inset on left/right/bottom (0.75rem) from the physical edge via
+   --watch-sheet-bottom. Glass on ::before so iOS does not sample fixed
+   backdrop-filter into the home-indicator chrome. */
 .watch-sheet {
   position: fixed;
   left: var(--watch-sheet-inset);
   right: var(--watch-sheet-inset);
-  bottom: var(--watch-sheet-inset);
+  bottom: var(--watch-sheet-bottom);
   z-index: 20;
   display: flex;
   flex-direction: column;
@@ -159,11 +171,19 @@ body {
   border-radius: var(--radius-watch-sheet);
   overflow: hidden;
   isolation: isolate;
+  border: 1px solid transparent;
+  background: transparent;
+  box-shadow: none;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
-.watch-sheet,
-.add-flow {
+.watch-sheet::before,
+.add-flow::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
   border: 1px solid var(--focus-glass-border);
   background-color: var(--watch-sheet-glass, var(--focus-glass));
   background-image: linear-gradient(
@@ -174,6 +194,19 @@ body {
   box-shadow: var(--focus-shadow);
   backdrop-filter: blur(22px) saturate(1.5);
   -webkit-backdrop-filter: blur(22px) saturate(1.5);
+  pointer-events: none;
+}
+
+.watch-sheet > *,
+.add-flow > * {
+  position: relative;
+  z-index: 1;
+}
+
+.add-flow {
+  border: 1px solid transparent;
+  background: transparent;
+  box-shadow: none;
 }
 
 .watch-sheet__status {
@@ -370,7 +403,7 @@ body {
 /* Leaflet attribution on full-bleed map (above the watch-sheet) */
 .map-stage .leaflet-control-attribution {
   margin: 0 0
-    calc(var(--watch-sheet-height) + var(--watch-sheet-inset) + 0.75rem) 0 !important;
+    calc(var(--watch-sheet-height) + var(--watch-sheet-bottom) + 0.75rem) 0 !important;
   padding: 0.15rem 0.4rem !important;
   background: var(--focus-glass) !important;
   color: var(--text-subtle) !important;
@@ -617,7 +650,7 @@ body {
   left: 0;
   right: 0;
   bottom: calc(
-    var(--watch-sheet-inset) + var(--watch-sheet-height) + var(--add-anchor-gap)
+    var(--watch-sheet-bottom) + var(--watch-sheet-height) + var(--add-anchor-gap)
   );
   z-index: 30;
   display: flex;
@@ -871,7 +904,7 @@ body {
   position: fixed;
   left: 50%;
   bottom: calc(
-    var(--watch-sheet-inset) + var(--watch-sheet-height) + var(--add-anchor-gap) +
+    var(--watch-sheet-bottom) + var(--watch-sheet-height) + var(--add-anchor-gap) +
       var(--nav-add-size) + 0.5rem
   );
   z-index: 31;
@@ -1277,7 +1310,9 @@ body.add-flow-active .nav-dock__add--clear {
   }
 }
 
-/* Vertical sun/moon theme control — map top-right */
+/* Vertical sun/moon theme control — map top-right.
+   Glass on ::before so iOS does not sample fixed backdrop-filter into
+   the translucent status bar. */
 .theme-toggle {
   position: fixed;
   top: calc(env(safe-area-inset-top, 0px) + 0.75rem);
@@ -1290,15 +1325,28 @@ body.add-flow-active .nav-dock__add--clear {
   padding: 0;
   border: none;
   border-radius: 1rem;
-  overflow: hidden;
+  overflow: visible;
+  background: transparent;
+  box-shadow: none;
+  transition: opacity 0.2s ease;
+}
+
+.theme-toggle::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
   background: var(--watch-sheet-glass, var(--focus-glass));
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.1);
   backdrop-filter: blur(16px) saturate(1.5);
   -webkit-backdrop-filter: blur(16px) saturate(1.5);
-  transition: opacity 0.2s ease;
+  pointer-events: none;
 }
 
 .theme-toggle__btn {
+  position: relative;
+  z-index: 1;
   box-sizing: border-box;
   display: grid;
   place-items: center;
