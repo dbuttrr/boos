@@ -1827,7 +1827,15 @@ addRouteInputEl?.addEventListener("keydown", (event) => {
 addRouteSuggestionsEl?.addEventListener("pointerdown", (event) => {
   const btn = event.target.closest(".add-flow__suggestion");
   if (!btn) return;
-  event.preventDefault();
+  // Keep mousedown from blurring the input before click; do not block touch scroll.
+  if (event.pointerType === "mouse") {
+    event.preventDefault();
+  }
+});
+
+addRouteSuggestionsEl?.addEventListener("click", (event) => {
+  const btn = event.target.closest(".add-flow__suggestion");
+  if (!btn) return;
   selectRouteSuggestion(btn.dataset.route);
 });
 
@@ -2008,9 +2016,7 @@ document.getElementById("app").addEventListener("click", (event) => {
   if (
     event.target.closest(".row") ||
     event.target.closest("#map-stage") ||
-    event.target.closest(".nav-dock") ||
-    event.target.closest(".theme-toggle") ||
-    event.target.closest("#add-flow") ||
+    event.target.closest(".add-anchor") ||
     event.target.closest(".add-toast")
   ) {
     return;
