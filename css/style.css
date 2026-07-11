@@ -7,6 +7,7 @@
 html {
   -webkit-text-size-adjust: 100%;
   background: var(--bg);
+  height: 100%;
 }
 
 :root,
@@ -118,7 +119,9 @@ html {
 
 body {
   margin: 0;
+  min-height: 100%;
   min-height: 100dvh;
+  min-height: -webkit-fill-available;
   overflow: hidden;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   background: var(--bg);
@@ -128,22 +131,40 @@ body {
 
 #app {
   position: relative;
+  min-height: 100%;
   min-height: 100dvh;
+  min-height: -webkit-fill-available;
 }
 
 /* Full-bleed Leaflet stage — active framing is the top half.
-   Keep the fixed stage background transparent: iOS 26 samples fixed
-   edge backgrounds for status-bar chrome; a grey fill becomes a grey bar.
-   Fallback color lives on html/body while tiles load. */
+   Fixed stage background stays transparent (iOS 26 samples it for
+   status-bar chrome). With black-translucent, content starts under the
+   status bar but height can fall short by the same inset — extend the
+   bottom by safe-area-inset-top so the map fills that gap. */
 .map-stage {
   position: fixed;
-  inset: 0;
+  top: 0;
+  right: 0;
+  left: 0;
+  bottom: calc(-1 * env(safe-area-inset-top, 0px));
   z-index: 0;
   background: transparent;
 }
 
+/* Absolute fill — not sampled for chrome tint; covers bottom while tiles load */
+.map-stage::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background: var(--bg);
+  pointer-events: none;
+}
+
 .map-stage__map,
 .map-stage .leaflet-container {
+  position: relative;
+  z-index: 1;
   width: 100%;
   height: 100%;
   background: transparent !important;

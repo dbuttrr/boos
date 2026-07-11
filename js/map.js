@@ -416,6 +416,8 @@ export async function initMapStage({
   await ensureMap();
   await new Promise((r) => requestAnimationFrame(() => r()));
   map.invalidateSize({ animate: false });
+  // PWA black-translucent can settle safe-area / viewport a frame later.
+  requestAnimationFrame(() => map?.invalidateSize({ animate: false }));
 
   focusActive = false;
   idleFollow = true;

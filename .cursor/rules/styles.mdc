@@ -28,7 +28,7 @@ Use `block__element--modifier`:
 
 ## Mobile & a11y
 
-- `viewport-fit=cover` for notched devices; PWA status bar uses `black-translucent` so the map can extend under the notch; fixed top chrome (`.map-stage`, `.theme-toggle`, `.add-pick-hint`) keeps backgrounds/`backdrop-filter` off the fixed element itself (glass on absolute/`::before`) so iOS 26 does not tint the status bar grey
+- `viewport-fit=cover` for notched devices; PWA status bar uses `black-translucent` so the map can extend under the notch; fixed top chrome (`.map-stage`, `.theme-toggle`, `.add-pick-hint`) keeps backgrounds/`backdrop-filter` off the fixed element itself (glass on absolute/`::before`) so iOS 26 does not tint the status bar grey; `.map-stage` bottom extends by `safe-area-inset-top` to close the bottom gap that translucent status bars leave
 - Touch-friendly targets; `aria-live="polite"` on dynamic sections (`#cards`)
 - `role="button"` + keyboard (`Enter`/`Space`) for interactive rows
 - `aria-label` / `aria-pressed` on each theme-toggle sun/moon button (no visual selected chrome)
