@@ -39,13 +39,13 @@ html {
   --row-glass-focused: rgba(255, 255, 255, 0.62);
   --row-focused-glow: 0 8px 24px rgba(9, 105, 218, 0.12);
   --glass-sheen: rgba(255, 255, 255, 0.22);
-  --radius-watch-sheet: 2.75rem;
+  --radius-watch-sheet: 2.875rem;
   --watch-sheet-inset: 0.75rem;
   --watch-sheet-height: 48dvh;
   --add-anchor-gap: 1rem;
-  --radius-row: 1.875rem;
-  --radius-row-delete: 1.625rem;
-  --radius-add-flow: 1.5rem;
+  --radius-row: 2rem;
+  --radius-row-delete: 1.75rem;
+  --radius-add-flow: 1.625rem;
   --nav-add-size: 2.375rem;
   --focus-you: #0969da;
   --focus-bus: #0969da;
@@ -657,7 +657,7 @@ body {
   width: 100%;
   padding: 0.625rem 0.75rem;
   border: 1px solid var(--border);
-  border-radius: 1rem;
+  border-radius: 1.125rem;
   background: var(--row-glass);
   color: var(--text);
   font-size: 1rem;
