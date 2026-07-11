@@ -6,6 +6,7 @@
 
 html {
   -webkit-text-size-adjust: 100%;
+  background: var(--bg);
 }
 
 :root,
@@ -130,12 +131,33 @@ body {
   min-height: 100dvh;
 }
 
-/* Full-bleed Leaflet stage — active framing is the top half */
+/* Full-bleed Leaflet stage — active framing is the top half.
+   Transparent so iOS does not sample a grey fixed fill into the status bar.
+   Sheet position stays at --watch-sheet-inset; only the map grows downward. */
 .map-stage {
   position: fixed;
-  inset: 0;
+  top: 0;
+  right: 0;
+  left: 0;
+  bottom: 0;
   z-index: 0;
-  background: var(--border);
+  background: transparent;
+}
+
+/* PWA + black-translucent: cover the grey strip below the layout viewport
+   with map tiles. Do not move .watch-sheet / .add-anchor. */
+@media (display-mode: standalone), (display-mode: fullscreen) {
+  .map-stage {
+    bottom: calc(
+      0px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)
+    );
+  }
+}
+
+html.ios-standalone .map-stage {
+  bottom: calc(
+    0px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)
+  );
 }
 
 .map-stage__map {
@@ -143,9 +165,8 @@ body {
   height: 100%;
 }
 
-/* Liquid-glass watchlist over the bottom half of the map.
-   Equal inset on left/right/bottom (0.75rem); ignores home-indicator
-   safe-area so the bottom gutter matches the sides. */
+/* Liquid-glass watchlist — sheet position unchanged (physical inset).
+   Glass on ::before so iOS does not sample fixed backdrop-filter. */
 .watch-sheet {
   position: fixed;
   left: var(--watch-sheet-inset);
@@ -159,11 +180,19 @@ body {
   border-radius: var(--radius-watch-sheet);
   overflow: hidden;
   isolation: isolate;
+  border: 1px solid transparent;
+  background: transparent;
+  box-shadow: none;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
-.watch-sheet,
-.add-flow {
+.watch-sheet::before,
+.add-flow::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
   border: 1px solid var(--focus-glass-border);
   background-color: var(--watch-sheet-glass, var(--focus-glass));
   background-image: linear-gradient(
@@ -174,6 +203,19 @@ body {
   box-shadow: var(--focus-shadow);
   backdrop-filter: blur(22px) saturate(1.5);
   -webkit-backdrop-filter: blur(22px) saturate(1.5);
+  pointer-events: none;
+}
+
+.watch-sheet > *,
+.add-flow > * {
+  position: relative;
+  z-index: 1;
+}
+
+.add-flow {
+  border: 1px solid transparent;
+  background: transparent;
+  box-shadow: none;
 }
 
 .watch-sheet__status {
@@ -1277,7 +1319,8 @@ body.add-flow-active .nav-dock__add--clear {
   }
 }
 
-/* Vertical sun/moon theme control — map top-right */
+/* Vertical sun/moon theme control — map top-right.
+   Glass on ::before so iOS does not sample fixed backdrop-filter. */
 .theme-toggle {
   position: fixed;
   top: calc(env(safe-area-inset-top, 0px) + 0.75rem);
@@ -1290,15 +1333,28 @@ body.add-flow-active .nav-dock__add--clear {
   padding: 0;
   border: none;
   border-radius: 1rem;
-  overflow: hidden;
+  overflow: visible;
+  background: transparent;
+  box-shadow: none;
+  transition: opacity 0.2s ease;
+}
+
+.theme-toggle::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
   background: var(--watch-sheet-glass, var(--focus-glass));
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.1);
   backdrop-filter: blur(16px) saturate(1.5);
   -webkit-backdrop-filter: blur(16px) saturate(1.5);
-  transition: opacity 0.2s ease;
+  pointer-events: none;
 }
 
 .theme-toggle__btn {
+  position: relative;
+  z-index: 1;
   box-sizing: border-box;
   display: grid;
   place-items: center;
