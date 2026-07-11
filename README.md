@@ -45,7 +45,7 @@ Changes to `js/config.js` take effect after you push and GitHub Pages redeploys 
 
 ### In the app
 
-Tap **+** above the watchlist to add a route: by default the map shows nearby bus stops within 500 m — tap a stop, then pick a route and direction from the list. Use **Enter route number instead** for the original flow (type route → direction → tap stop on map). Swipe a row left and tap Delete to remove it. Changes are saved in your browser's localStorage.
+Tap **+** above the watchlist to add a route: choose **Find nearby** (stops within 500 m on the map) or **Enter manually** (type route → direction → tap stop). Swipe a row left and tap Delete to remove it. Changes are saved in your browser's localStorage.
 
 ### Via config (optional seed)
 

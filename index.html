@@ -21,6 +21,12 @@
       <p id="add-pick-hint" class="add-pick-hint" hidden role="status">
         Tap your boarding stop on the map
       </p>
+      <div
+        id="add-menu-backdrop"
+        class="add-menu-backdrop"
+        hidden
+        aria-hidden="true"
+      ></div>
       <div class="add-anchor">
         <div class="add-flow-stack">
           <ul
@@ -46,25 +52,11 @@
                       aria-controls="add-route-suggestions"
                     />
                   </div>
-                  <button
-                    type="button"
-                    class="add-flow__link"
-                    id="add-flow-nearby-fallback"
-                  >
-                    Pick a nearby stop instead
-                  </button>
                 </div>
                 <div id="add-flow-step-nearby" class="add-flow__step" hidden>
                   <p class="add-flow__summary" id="add-flow-nearby-status">
                     Finding nearby stops…
                   </p>
-                  <button
-                    type="button"
-                    class="add-flow__link"
-                    id="add-flow-route-fallback"
-                  >
-                    Enter route number instead
-                  </button>
                 </div>
                 <div id="add-flow-step-stop-routes" class="add-flow__step" hidden>
                   <p class="add-flow__summary" id="add-flow-stop-summary"></p>
@@ -113,6 +105,24 @@
           </div>
           <p class="add-flow__error" id="add-flow-error" hidden></p>
         </div>
+        </div>
+        <div id="add-menu" class="add-menu" role="menu" aria-label="Add route" hidden>
+          <button
+            type="button"
+            class="add-menu__choice"
+            id="add-menu-nearby"
+            role="menuitem"
+          >
+            Find nearby
+          </button>
+          <button
+            type="button"
+            class="add-menu__choice"
+            id="add-menu-manual"
+            role="menuitem"
+          >
+            Enter manually
+          </button>
         </div>
         <nav class="nav-dock" aria-label="App controls">
           <button

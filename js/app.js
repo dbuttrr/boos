@@ -78,9 +78,11 @@ const addFlowStepStopRoutesEl = document.getElementById("add-flow-step-stop-rout
 const addFlowNearbyStatusEl = document.getElementById("add-flow-nearby-status");
 const addFlowStopSummaryEl = document.getElementById("add-flow-stop-summary");
 const addFlowStopRoutesEl = document.getElementById("add-flow-stop-routes");
-const addFlowRouteFallbackEl = document.getElementById("add-flow-route-fallback");
-const addFlowNearbyFallbackEl = document.getElementById("add-flow-nearby-fallback");
 const addFlowBackNearbyEl = document.getElementById("add-flow-back-nearby");
+const addMenuBackdropEl = document.getElementById("add-menu-backdrop");
+const addMenuEl = document.getElementById("add-menu");
+const addMenuNearbyEl = document.getElementById("add-menu-nearby");
+const addMenuManualEl = document.getElementById("add-menu-manual");
 const addPickHintEl = document.getElementById("add-pick-hint");
 const addFlowRouteSummaryEl = document.getElementById("add-flow-route-summary");
 const addRouteInputEl = document.getElementById("add-route-input");
@@ -133,6 +135,7 @@ let addState = {
   loadToken: 0,
 };
 let addToastTimer = null;
+let addMenuOpen = false;
 let swipeState = null;
 let openSwipeRow = null;
 let suppressRowClick = false;
@@ -380,14 +383,62 @@ function setFocusedRows(ids) {
 function syncDockButton() {
   const btn = document.getElementById("add-route-btn");
   if (!btn) return;
-  const clearMode = isAddFlowActive() || focusedIds.length > 1;
+  const clearMode = isAddFlowActive() || addMenuOpen || focusedIds.length > 1;
   btn.classList.toggle("nav-dock__add--clear", clearMode);
   if (isAddFlowActive()) {
     btn.setAttribute("aria-label", "Cancel adding route");
+  } else if (addMenuOpen) {
+    btn.setAttribute("aria-label", "Close add menu");
   } else if (focusedIds.length > 1) {
     btn.setAttribute("aria-label", "Clear selection");
   } else {
     btn.setAttribute("aria-label", "Add route");
+  }
+}
+
+function isAddMenuOpen() {
+  return addMenuOpen;
+}
+
+function openAddMenu() {
+  closeAllSwipeRows();
+  if (isFocusPanelVisible()) {
+    exitFocus();
+  }
+  addMenuOpen = true;
+  if (addMenuBackdropEl) {
+    addMenuBackdropEl.hidden = false;
+    addMenuBackdropEl.setAttribute("aria-hidden", "false");
+  }
+  if (addMenuEl) {
+    addMenuEl.hidden = false;
+  }
+  requestAnimationFrame(() => {
+    document.body.classList.add("add-menu-open");
+  });
+  syncDockButton();
+}
+
+function closeAddMenu({ immediate = false } = {}) {
+  if (!addMenuOpen) return;
+  addMenuOpen = false;
+  document.body.classList.remove("add-menu-open");
+  syncDockButton();
+
+  const hide = () => {
+    if (addMenuBackdropEl) {
+      addMenuBackdropEl.hidden = true;
+      addMenuBackdropEl.setAttribute("aria-hidden", "true");
+    }
+    if (addMenuEl) {
+      addMenuEl.hidden = true;
+    }
+  };
+
+  if (immediate) {
+    hide();
+  } else {
+    window.setTimeout(hide, 280);
   }
 }
 
@@ -1442,6 +1493,7 @@ function resetAddState() {
 }
 
 function cancelAddFlow() {
+  closeAddMenu();
   resetAddState();
 }
 
@@ -1466,12 +1518,8 @@ function showAddToast(message) {
   }, ADD_TOAST_MS);
 }
 
-async function startAddFlow() {
-  closeAllSwipeRows();
-  if (isFocusPanelVisible()) {
-    exitFocus();
-  }
-
+async function startNearbyFlow() {
+  closeAddMenu({ immediate: true });
   resetAddState();
   addState.mode = "nearby";
   addState.step = "nearby-loading";
@@ -1486,50 +1534,19 @@ async function startAddFlow() {
   await loadNearbyStops();
 }
 
-async function switchToRouteEntry() {
-  const token = ++addState.loadToken;
+async function startManualFlow() {
+  closeAddMenu({ immediate: true });
+  resetAddState();
   addState.mode = "route";
   addState.step = "route";
-  addState.route = "";
-  addState.direction = null;
-  addState.routeMeta = null;
-  addState.selectedStop = null;
-  addState.stopRoutes = [];
-  if (isAddPickActive()) {
-    exitAddPickMode({ youLatLng: getLastPosition() });
-  }
-  addRouteInputEl.value = "";
-  hideRouteSuggestions();
-  setAddError("");
-  if (addFlowStopRoutesEl) addFlowStopRoutesEl.innerHTML = "";
   paintAddFlowStep();
+
+  startGeolocation();
+  prefetchRouteCatalog();
 
   await yieldToPaint();
-  if (token !== addState.loadToken || !isAddFlowActive()) return;
+  if (!isAddFlowActive()) return;
   addRouteInputEl.focus();
-}
-
-async function switchToNearbyEntry() {
-  if (isAddPickActive()) {
-    exitAddPickMode({ youLatLng: getLastPosition() });
-  }
-  addRouteInputEl.value = "";
-  hideRouteSuggestions();
-  addState.mode = "nearby";
-  addState.route = "";
-  addState.direction = null;
-  addState.routeMeta = null;
-  addState.selectedStop = null;
-  addState.stopRoutes = [];
-  addState.step = "nearby-loading";
-  if (addFlowNearbyStatusEl) {
-    addFlowNearbyStatusEl.textContent = "Finding nearby stops…";
-  }
-  if (addFlowStopRoutesEl) addFlowStopRoutesEl.innerHTML = "";
-  setAddError("");
-  paintAddFlowStep();
-  startGeolocation();
-  await loadNearbyStops();
 }
 
 async function loadNearbyStops() {
@@ -1550,7 +1567,7 @@ async function loadNearbyStops() {
       if (addFlowNearbyStatusEl) {
         addFlowNearbyStatusEl.textContent = `No stops within ${formatNearbyRadiusLabel()}`;
       }
-      setAddError("Try entering a route number instead");
+      setAddError("Tap × and choose Enter manually");
       paintAddFlowStep();
       return;
     }
@@ -1989,19 +2006,29 @@ document.getElementById("add-route-btn")?.addEventListener("click", (event) => {
     cancelAddFlow();
     return;
   }
+  if (addMenuOpen) {
+    closeAddMenu();
+    return;
+  }
   if (focusedIds.length > 1) {
     exitFocus();
     return;
   }
-  startAddFlow();
+  openAddMenu();
 });
 
-addFlowRouteFallbackEl?.addEventListener("click", () => {
-  switchToRouteEntry();
+addMenuBackdropEl?.addEventListener("click", () => {
+  closeAddMenu();
 });
 
-addFlowNearbyFallbackEl?.addEventListener("click", () => {
-  switchToNearbyEntry();
+addMenuNearbyEl?.addEventListener("click", (event) => {
+  event.stopPropagation();
+  startNearbyFlow();
+});
+
+addMenuManualEl?.addEventListener("click", (event) => {
+  event.stopPropagation();
+  startManualFlow();
 });
 
 addFlowBackNearbyEl?.addEventListener("click", () => {
@@ -2286,6 +2313,7 @@ document.getElementById("app").addEventListener("click", (event) => {
     event.target.closest(".row") ||
     event.target.closest("#map-stage") ||
     event.target.closest(".add-anchor") ||
+    event.target.closest(".add-menu-backdrop") ||
     event.target.closest(".add-toast")
   ) {
     return;
@@ -2294,7 +2322,12 @@ document.getElementById("app").addEventListener("click", (event) => {
 });
 
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape" && isAddFlowActive()) {
+  if (event.key !== "Escape") return;
+  if (isAddFlowActive()) {
     cancelAddFlow();
+    return;
+  }
+  if (addMenuOpen) {
+    closeAddMenu();
   }
 });

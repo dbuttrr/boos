@@ -635,6 +635,113 @@ body {
   pointer-events: auto;
 }
 
+/* + menu — full-screen blur + floating choice bubbles */
+.add-menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 28;
+  border: none;
+  padding: 0;
+  margin: 0;
+  background: rgba(12, 16, 22, 0.12);
+  backdrop-filter: blur(16px) saturate(1.2);
+  -webkit-backdrop-filter: blur(16px) saturate(1.2);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.28s ease;
+}
+
+[data-theme="dark"] .add-menu-backdrop {
+  background: rgba(0, 0, 0, 0.35);
+}
+
+body.add-menu-open .add-menu-backdrop {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.add-menu-backdrop[hidden],
+.add-menu[hidden] {
+  display: none;
+}
+
+.add-menu {
+  position: absolute;
+  bottom: calc(var(--nav-add-size) + 0.625rem);
+  left: 50%;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+body.add-menu-open .add-menu {
+  pointer-events: auto;
+}
+
+.add-menu[hidden] {
+  display: none;
+}
+
+.add-menu__choice {
+  padding: 0.6875rem 1.25rem;
+  border: 1px solid var(--focus-glass-border);
+  border-radius: 999px;
+  background-color: var(--watch-sheet-glass, var(--focus-glass));
+  background-image: linear-gradient(
+    135deg,
+    var(--focus-glass-highlight) 0%,
+    transparent 42%
+  );
+  box-shadow: var(--focus-shadow);
+  backdrop-filter: blur(22px) saturate(1.5);
+  -webkit-backdrop-filter: blur(22px) saturate(1.5);
+  color: var(--text);
+  font-size: 0.875rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  line-height: 1.2;
+  white-space: nowrap;
+  cursor: pointer;
+  opacity: 0;
+  transform: translateY(0.75rem) scale(0.92);
+  transition:
+    opacity 0.28s ease,
+    transform 0.32s cubic-bezier(0.34, 1.35, 0.64, 1),
+    background 0.2s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body.add-menu-open .add-menu__choice {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
+body.add-menu-open .add-menu__choice:nth-child(2) {
+  transition-delay: 0.05s;
+}
+
+.add-menu__choice:hover,
+.add-menu__choice:focus-visible {
+  background-color: var(--focus-selected);
+  outline: none;
+}
+
+.add-menu__choice:active {
+  transform: translateY(0) scale(0.97);
+}
+
+body.add-menu-open .add-menu__choice:active {
+  transform: translateY(0) scale(0.97);
+}
+
+body.add-menu-open .add-menu__choice:nth-child(2):active {
+  transform: translateY(0) scale(0.97);
+}
+
 .add-flow-stack {
   position: relative;
   z-index: 2;
@@ -1009,6 +1116,18 @@ body.add-flow-active .nav-dock__add--clear {
   animation: none;
 }
 
+body.add-menu-open .watch-sheet {
+  pointer-events: none;
+}
+
+body.add-menu-open .nav-dock__add {
+  transform: rotate(45deg);
+}
+
+body.add-menu-open .nav-dock__add--clear {
+  animation: nav-dock-clear-pulse 0.45s cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+
 
 .focus-marker__bus {
   position: relative;
@@ -1273,7 +1392,7 @@ body.add-flow-active .nav-dock__add--clear {
 /* Floating + / clear control (inside add-anchor above watch-sheet) */
 .nav-dock {
   position: relative;
-  z-index: 1;
+  z-index: 5;
   display: flex;
   align-items: center;
   justify-content: center;
