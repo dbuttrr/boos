@@ -110,7 +110,8 @@ let lastFocusFullRefreshAt = 0;
 
 let routeCatalog = [];
 let suggestionBlurTimer = null;
-let suppressSuggestionBlur = false;
+let suggestionTouch = null;
+let suggestionSelectedViaTouch = false;
 let validateRouteToken = 0;
 let addState = {
   step: "idle",
@@ -1207,6 +1208,12 @@ async function updateRouteSuggestions(query) {
 }
 
 function selectRouteSuggestion(route) {
+  if (!route) return;
+  if (suggestionBlurTimer) {
+    clearTimeout(suggestionBlurTimer);
+    suggestionBlurTimer = null;
+  }
+  suggestionTouch = null;
   hideRouteSuggestions();
   addRouteInputEl.value = route;
   validateAndLoadRoute(route);
@@ -1784,12 +1791,11 @@ addRouteInputEl?.addEventListener("focusout", (event) => {
   if (event.relatedTarget?.closest?.(".add-flow__suggestion")) return;
   suggestionBlurTimer = setTimeout(() => {
     suggestionBlurTimer = null;
-    if (suppressSuggestionBlur) {
-      suppressSuggestionBlur = false;
-      return;
-    }
+    const suggestionsVisible = !addRouteSuggestionsEl.hidden;
     hideRouteSuggestions();
-    validateAndLoadRoute(addRouteInputEl.value);
+    if (!suggestionsVisible) {
+      validateAndLoadRoute(addRouteInputEl.value);
+    }
   }, SUGGESTION_BLUR_MS);
 });
 
@@ -1808,18 +1814,42 @@ addRouteSuggestionsEl?.addEventListener("touchstart", (event) => {
     clearTimeout(suggestionBlurTimer);
     suggestionBlurTimer = null;
   }
-  if (event.target.closest(".add-flow__suggestion")) {
-    suppressSuggestionBlur = true;
+  const item = event.target.closest(".add-flow__suggestion");
+  if (!item) {
+    suggestionTouch = null;
+    return;
+  }
+  const touch = event.touches[0];
+  if (!touch) return;
+  suggestionTouch = {
+    route: item.getAttribute("data-route"),
+    x: touch.clientX,
+    y: touch.clientY,
+  };
+}, { passive: true });
+
+addRouteSuggestionsEl?.addEventListener("touchmove", (event) => {
+  if (!suggestionTouch) return;
+  const touch = event.touches[0];
+  if (!touch) return;
+  const dx = touch.clientX - suggestionTouch.x;
+  const dy = touch.clientY - suggestionTouch.y;
+  if (Math.abs(dx) > 12 || Math.abs(dy) > 12) {
+    suggestionTouch = null;
   }
 }, { passive: true });
 
-addRouteSuggestionsEl?.addEventListener("touchmove", () => {
-  suppressSuggestionBlur = false;
-}, { passive: true });
+addRouteSuggestionsEl?.addEventListener("touchend", (event) => {
+  if (!suggestionTouch?.route) return;
+  const route = suggestionTouch.route;
+  suggestionTouch = null;
+  suggestionSelectedViaTouch = true;
+  event.preventDefault();
+  selectRouteSuggestion(route);
+}, { passive: false });
 
 addRouteSuggestionsEl?.addEventListener("pointerdown", (event) => {
   if (!event.target.closest(".add-flow__suggestion")) return;
-  suppressSuggestionBlur = true;
   if (event.pointerType === "mouse") {
     // Keep mousedown from blurring the input before click; do not block touch scroll.
     event.preventDefault();
@@ -1827,10 +1857,14 @@ addRouteSuggestionsEl?.addEventListener("pointerdown", (event) => {
 });
 
 addRouteSuggestionsEl?.addEventListener("click", (event) => {
+  if (suggestionSelectedViaTouch) {
+    suggestionSelectedViaTouch = false;
+    event.preventDefault();
+    return;
+  }
   const item = event.target.closest(".add-flow__suggestion");
   if (!item) return;
-  suppressSuggestionBlur = false;
-  selectRouteSuggestion(item.dataset.route);
+  selectRouteSuggestion(item.getAttribute("data-route"));
 });
 
 addDirOutboundEl?.addEventListener("click", () => {
