@@ -130,10 +130,12 @@ body {
   min-height: 100dvh;
 }
 
-/* Full-bleed Leaflet stage — active framing is the top half */
+/* Full-bleed Leaflet stage — active framing is the top half.
+   Bleed into the top safe area so the map runs under the PWA status bar. */
 .map-stage {
   position: fixed;
   inset: 0;
+  top: calc(-1 * env(safe-area-inset-top, 0px));
   z-index: 0;
   background: var(--border);
 }
