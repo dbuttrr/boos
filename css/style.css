@@ -592,6 +592,8 @@ body {
 }
 
 .add-flow {
+  position: relative;
+  z-index: 2;
   width: 100%;
   padding: 0.75rem;
   border-radius: var(--radius-add-flow);
@@ -653,7 +655,8 @@ body {
   z-index: 50;
   left: 0;
   right: 0;
-  top: calc(100% + 0.375rem);
+  bottom: calc(100% + 0.375rem);
+  top: auto;
   list-style: none;
   margin: 0;
   padding: 0;
@@ -1134,6 +1137,8 @@ body.add-flow-active .nav-dock__add--clear {
 
 /* Floating + / clear control (inside add-anchor above watch-sheet) */
 .nav-dock {
+  position: relative;
+  z-index: 1;
   display: flex;
   align-items: center;
   justify-content: center;
