@@ -1756,10 +1756,6 @@ document.getElementById("add-route-btn")?.addEventListener("click", (event) => {
   startAddFlow();
 });
 
-addFlowBackEl?.addEventListener("click", () => {
-  goBackAddFlow();
-});
-
 addRouteInputEl?.addEventListener("input", () => {
   updateRouteSuggestions(addRouteInputEl.value);
 });
@@ -1771,6 +1767,7 @@ addRouteInputEl?.addEventListener("change", () => {
 addRouteInputEl?.addEventListener("blur", () => {
   suggestionBlurTimer = setTimeout(() => {
     suggestionBlurTimer = null;
+    if (addRouteSuggestionsEl?.contains(document.activeElement)) return;
     hideRouteSuggestions();
     validateAndLoadRoute(addRouteInputEl.value);
   }, SUGGESTION_BLUR_MS);
@@ -1786,14 +1783,16 @@ addRouteInputEl?.addEventListener("keydown", (event) => {
   }
 });
 
-addRouteSuggestionsEl?.addEventListener("pointerdown", (event) => {
+addRouteSuggestionsEl?.addEventListener("mousedown", (event) => {
+  event.preventDefault();
+});
+
+addRouteSuggestionsEl?.addEventListener("touchstart", (event) => {
   const btn = event.target.closest(".add-flow__suggestion");
   if (!btn) return;
-  // Keep mousedown from blurring the input before click; do not block touch scroll.
-  if (event.pointerType === "mouse") {
-    event.preventDefault();
-  }
-});
+  event.preventDefault();
+  selectRouteSuggestion(btn.dataset.route);
+}, { passive: false });
 
 addRouteSuggestionsEl?.addEventListener("click", (event) => {
   const btn = event.target.closest(".add-flow__suggestion");

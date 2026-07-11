@@ -23,7 +23,7 @@
           <div class="add-flow__bar">
             <div class="add-flow__body">
               <div id="add-flow-step-route" class="add-flow__step">
-                <label class="add-flow__field">
+                <div class="add-flow__field">
                   <input
                     type="text"
                     id="add-route-input"
@@ -35,13 +35,13 @@
                     aria-autocomplete="list"
                     aria-controls="add-route-suggestions"
                   />
-                  <ul
-                    id="add-route-suggestions"
-                    class="add-flow__suggestions"
-                    role="listbox"
-                    hidden
-                  ></ul>
-                </label>
+                </div>
+                <ul
+                  id="add-route-suggestions"
+                  class="add-flow__suggestions"
+                  role="listbox"
+                  hidden
+                ></ul>
               </div>
               <div id="add-flow-step-direction" class="add-flow__step" hidden>
                 <p class="add-flow__summary" id="add-flow-route-summary"></p>
