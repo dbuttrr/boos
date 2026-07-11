@@ -603,7 +603,7 @@ body {
   flex-shrink: 0;
   width: 2rem;
   height: 2rem;
-  margin-top: 1.125rem;
+  margin-top: 0.125rem;
   padding: 0;
   border: 1px solid var(--border);
   border-radius: 50%;
