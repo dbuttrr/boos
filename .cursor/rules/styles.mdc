@@ -28,7 +28,7 @@ Use `block__element--modifier`:
 
 ## Mobile & a11y
 
-- `viewport-fit=cover` for notched devices
+- `viewport-fit=cover` for notched devices; PWA uses `black-translucent` plus standalone force-extend (`--watch-sheet-bottom` subtracts `safe-area-inset-top` and `safe-area-inset-bottom`; map stage bottom matches) so the upward viewport shift does not leave a bottom gap; fixed chrome glass on `::before`
 - Touch-friendly targets; `aria-live="polite"` on dynamic sections (`#cards`)
 - `role="button"` + keyboard (`Enter`/`Space`) for interactive rows
 - `aria-label` / `aria-pressed` on each theme-toggle sun/moon button (no visual selected chrome)
