@@ -190,6 +190,7 @@ function formatStopLabelHtml(name) {
 const STOP_LABEL_ICON_W = 168;
 const STOP_LABEL_ICON_H = 58;
 const STOP_LABEL_ICON_H_TWO_LINE = 72;
+const ADD_PICK_ICON_W = 212;
 
 /**
  * Boarding / picker stop pin.
@@ -230,6 +231,36 @@ export function stopIcon({
     html: `<span class="focus-marker__stop-wrap"${hasLabel || selected ? ` style="--stop-label-accent:${accent}"` : ""}>${labelHtml}<span class="focus-marker__stop" aria-hidden="true"><span class="focus-marker__stop-head"></span><span class="focus-marker__stop-stem"></span></span></span>`,
     iconSize: [width, height],
     iconAnchor: [width / 2, height - 2],
+  });
+}
+
+function stopLabelTwoLine(name) {
+  return (
+    Boolean(name) &&
+    name.includes(",") &&
+    name.slice(0, name.indexOf(",")).trim() &&
+    name.slice(name.indexOf(",") + 1).trim()
+  );
+}
+
+/** Selected add-pick stop: glass name tooltip + confirm checkmark beside it. */
+function addPickSelectedStopIcon({ label = "" } = {}) {
+  const L = window.L;
+  const name = typeof label === "string" ? label.trim() : "";
+  const twoLine = stopLabelTwoLine(name);
+  const palette = ROUTE_COLORS[0];
+  const accent = getAppTheme() === "dark" ? palette.dark : palette.light;
+  const twoLineMod = twoLine ? " focus-marker--stop-labeled-2" : "";
+  const labelHtml = `<span class="focus-marker__stop-label">${formatStopLabelHtml(name)}</span>`;
+  const confirmHtml = `<button type="button" class="focus-marker__add-pick-confirm" aria-label="Add to list"><span class="focus-marker__add-pick-confirm-icon" aria-hidden="true">✓</span></button>`;
+  const barHtml = `<span class="focus-marker__add-pick-bar">${labelHtml}${confirmHtml}</span>`;
+  const height = twoLine ? STOP_LABEL_ICON_H_TWO_LINE : STOP_LABEL_ICON_H;
+
+  return L.divIcon({
+    className: `focus-marker focus-marker--stop focus-marker--stop-selected focus-marker--stop-labeled focus-marker--add-pick${twoLineMod}`,
+    html: `<span class="focus-marker__stop-wrap" style="--stop-label-accent:${accent}">${barHtml}<span class="focus-marker__stop" aria-hidden="true"><span class="focus-marker__stop-head"></span><span class="focus-marker__stop-stem"></span></span></span>`,
+    iconSize: [ADD_PICK_ICON_W, height],
+    iconAnchor: [ADD_PICK_ICON_W / 2, height - 2],
   });
 }
 
@@ -854,6 +885,7 @@ let addPickRouteLine = null;
 /** @type {Map<string, any>} */
 let addPickStopMarkers = new Map();
 let addPickOnSelect = null;
+let addPickOnConfirm = null;
 let addPickSelectedId = null;
 let addPickFitFrame = 0;
 let addPickUnsubscribePosition = null;
@@ -887,10 +919,32 @@ function clearAddPickLayers() {
 
 function updateAddPickMarkerIcons() {
   for (const [stopId, marker] of addPickStopMarkers) {
+    const stop = addPickStops.find((s) => s.stopId === stopId);
     const selected = stopId === addPickSelectedId;
-    marker.setIcon(selected ? stopIcon({ selected: true }) : stopDotIcon());
-    marker.setZIndexOffset(selected ? 250 : 100);
+    if (selected && stop) {
+      marker.setIcon(addPickSelectedStopIcon({ label: stop.nameEn || "Stop" }));
+      marker.setZIndexOffset(250);
+      bindAddPickConfirmButton(marker);
+    } else {
+      marker.setIcon(stopDotIcon());
+      marker.setZIndexOffset(100);
+    }
   }
+}
+
+function bindAddPickConfirmButton(marker) {
+  const el = marker.getElement?.();
+  if (!el || !window.L) return;
+  const btn = el.querySelector(".focus-marker__add-pick-confirm");
+  if (!btn) return;
+  const L = window.L;
+  L.DomEvent.off(btn);
+  L.DomEvent.on(btn, "mousedown touchstart", L.DomEvent.stopPropagation);
+  L.DomEvent.on(btn, "click", (event) => {
+    L.DomEvent.stopPropagation(event);
+    L.DomEvent.preventDefault(event);
+    addPickOnConfirm?.();
+  });
 }
 
 function collectAddPickPoints({ includeYou = true } = {}) {
@@ -954,10 +1008,12 @@ export async function enterAddPickMode({
   path = null,
   youLatLng = null,
   onSelect = null,
+  onConfirm = null,
   onPositionChange = null,
   isStale = () => false,
 } = {}) {
   addPickOnSelect = onSelect;
+  addPickOnConfirm = onConfirm;
   addPickSelectedId = null;
   addPickStops = stops;
   addPickYouLatLng = youLatLng;
@@ -1049,6 +1105,7 @@ export function exitAddPickMode({ youLatLng = null } = {}) {
   addPickActive = false;
   idleFollow = true;
   addPickOnSelect = null;
+  addPickOnConfirm = null;
   addPickSelectedId = null;
   addPickStops = [];
   addPickYouLatLng = null;

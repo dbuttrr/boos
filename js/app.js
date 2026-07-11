@@ -70,7 +70,6 @@ const addFlowEl = document.getElementById("add-flow");
 const addFlowStackEl = document.querySelector(".add-flow-stack");
 const addFlowStepRouteEl = document.getElementById("add-flow-step-route");
 const addFlowStepDirectionEl = document.getElementById("add-flow-step-direction");
-const addFlowStepConfirmEl = document.getElementById("add-flow-step-confirm");
 const addPickHintEl = document.getElementById("add-pick-hint");
 const addFlowRouteSummaryEl = document.getElementById("add-flow-route-summary");
 const addRouteInputEl = document.getElementById("add-route-input");
@@ -82,8 +81,6 @@ const ADD_TOAST_MS = 2200;
 const addDirOutboundEl = document.getElementById("add-dir-outbound");
 const addDirInboundEl = document.getElementById("add-dir-inbound");
 const addFlowErrorEl = document.getElementById("add-flow-error");
-const addConfirmLabelEl = document.getElementById("add-confirm-label");
-const addConfirmBtnEl = document.getElementById("add-confirm-btn");
 const addToastEl = document.getElementById("add-toast");
 const SORT_DEBOUNCE_MS = 2_000;
 const SWIPE_ACTION_WIDTH = 76;
@@ -1325,31 +1322,6 @@ function setAddError(message) {
   addFlowErrorEl.textContent = message;
 }
 
-function updateConfirmLabel() {
-  const { route, direction, routeMeta, selectedStop } = addState;
-  if (!route || !direction || !selectedStop) {
-    addConfirmLabelEl.textContent = "";
-    addConfirmBtnEl.disabled = true;
-    return;
-  }
-
-  const duplicate = hasEntry(watchlist, {
-    route,
-    stopId: selectedStop.stopId,
-    direction,
-  });
-
-  if (duplicate) {
-    addConfirmBtnEl.disabled = true;
-    addConfirmLabelEl.textContent = `${selectedStop.nameEn} — already on your list`;
-    return;
-  }
-
-  addConfirmBtnEl.disabled = false;
-  const dest = routeDestForDirection(routeMeta, direction);
-  addConfirmLabelEl.textContent = `${route} toward ${dest} · ${selectedStop.nameEn}`;
-}
-
 function setDirectionButtons(direction) {
   addDirOutboundEl.classList.toggle(
     "add-flow__dir-btn--active",
@@ -1375,9 +1347,7 @@ function paintAddFlowStep() {
   const step = addState.step;
   addFlowStepRouteEl.hidden = step !== "route";
   addFlowStepDirectionEl.hidden = step !== "direction";
-  addFlowStepConfirmEl.hidden = step !== "confirm";
 
-  addFlowEl.classList.toggle("add-flow--route", step === "route");
   addFlowEl.hidden = step === "picking" || step === "idle";
   addPickHintEl.hidden = step !== "picking";
 
@@ -1410,7 +1380,6 @@ function resetAddState() {
     exitAddPickMode({ youLatLng: getLastPosition() });
   }
   setAddError("");
-  updateConfirmLabel();
   addFlowEl.hidden = true;
   if (addPickHintEl) addPickHintEl.hidden = true;
   paintAddFlowStep();
@@ -1474,7 +1443,6 @@ async function validateAndLoadRoute(routeValue) {
     setDirectionButtons(null);
     updateDirectionLabels(null);
     setAddError("");
-    updateConfirmLabel();
     paintAddFlowStep();
     return;
   }
@@ -1490,7 +1458,6 @@ async function validateAndLoadRoute(routeValue) {
     addState.step = "direction";
     updateDirectionLabels(meta);
     setDirectionButtons(null);
-    updateConfirmLabel();
     paintAddFlowStep();
   } catch {
     if (token !== validateRouteToken || !isAddFlowActive()) return;
@@ -1502,7 +1469,6 @@ async function validateAndLoadRoute(routeValue) {
     setDirectionButtons(null);
     updateDirectionLabels(null);
     setAddError(`Route ${route} not found`);
-    updateConfirmLabel();
     paintAddFlowStep();
   }
 }
@@ -1516,7 +1482,6 @@ async function loadAddPickForDirection(direction) {
   addState.step = "picking";
   setDirectionButtons(direction);
   setAddError("");
-  updateConfirmLabel();
   paintAddFlowStep();
 
   try {
@@ -1543,10 +1508,11 @@ async function loadAddPickForDirection(direction) {
         if (token !== addState.loadToken || addState.step !== "picking") return;
         addState.selectedStop = stop;
         setAddPickSelection(stop.stopId);
-        addState.step = "confirm";
         setAddError("");
-        updateConfirmLabel();
-        paintAddFlowStep();
+      },
+      onConfirm: () => {
+        if (token !== addState.loadToken || addState.step !== "picking") return;
+        confirmAddEntry();
       },
       onPositionChange,
       isStale: () => token !== addState.loadToken || !isAddFlowActive(),
@@ -1598,7 +1564,7 @@ async function confirmAddEntry() {
   const { entries, added, reason } = addEntry(watchlist, entry);
   if (!added) {
     if (reason === "duplicate") {
-      setAddError("Already on your list");
+      showAddToast("Already on your list");
     }
     return;
   }
@@ -1877,10 +1843,6 @@ addDirOutboundEl?.addEventListener("click", () => {
 
 addDirInboundEl?.addEventListener("click", () => {
   loadAddPickForDirection("I");
-});
-
-addConfirmBtnEl?.addEventListener("click", () => {
-  confirmAddEntry();
 });
 
 addFlowEl?.addEventListener("click", (event) => {
