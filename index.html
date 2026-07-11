@@ -46,6 +46,41 @@
                       aria-controls="add-route-suggestions"
                     />
                   </div>
+                  <button
+                    type="button"
+                    class="add-flow__link"
+                    id="add-flow-nearby-fallback"
+                  >
+                    Pick a nearby stop instead
+                  </button>
+                </div>
+                <div id="add-flow-step-nearby" class="add-flow__step" hidden>
+                  <p class="add-flow__summary" id="add-flow-nearby-status">
+                    Finding nearby stops…
+                  </p>
+                  <button
+                    type="button"
+                    class="add-flow__link"
+                    id="add-flow-route-fallback"
+                  >
+                    Enter route number instead
+                  </button>
+                </div>
+                <div id="add-flow-step-stop-routes" class="add-flow__step" hidden>
+                  <p class="add-flow__summary" id="add-flow-stop-summary"></p>
+                  <ul
+                    class="add-flow__route-list"
+                    id="add-flow-stop-routes"
+                    role="listbox"
+                    aria-label="Routes at this stop"
+                  ></ul>
+                  <button
+                    type="button"
+                    class="add-flow__link"
+                    id="add-flow-back-nearby"
+                  >
+                    Pick another stop
+                  </button>
                 </div>
               <div id="add-flow-step-direction" class="add-flow__step" hidden>
                 <p class="add-flow__summary" id="add-flow-route-summary"></p>

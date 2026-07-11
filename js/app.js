@@ -9,6 +9,7 @@ import {
   BUS_REPOSITION_MS,
   BUS_REPOSITION_MIN_M,
   MAX_BUS_REWIND_M,
+  NEARBY_STOP_RADIUS_M,
 } from "./config.js";
 import {
   fetchEta,
@@ -16,6 +17,8 @@ import {
   fetchRoutes,
   fetchRouteMeta,
   fetchRouteStops,
+  fetchStopRoutes,
+  ensureStopsIndex,
   resolveRouteStopCoords,
   formatArrivalDisplay,
   formatTime,
@@ -70,6 +73,14 @@ const addFlowEl = document.getElementById("add-flow");
 const addFlowStackEl = document.querySelector(".add-flow-stack");
 const addFlowStepRouteEl = document.getElementById("add-flow-step-route");
 const addFlowStepDirectionEl = document.getElementById("add-flow-step-direction");
+const addFlowStepNearbyEl = document.getElementById("add-flow-step-nearby");
+const addFlowStepStopRoutesEl = document.getElementById("add-flow-step-stop-routes");
+const addFlowNearbyStatusEl = document.getElementById("add-flow-nearby-status");
+const addFlowStopSummaryEl = document.getElementById("add-flow-stop-summary");
+const addFlowStopRoutesEl = document.getElementById("add-flow-stop-routes");
+const addFlowRouteFallbackEl = document.getElementById("add-flow-route-fallback");
+const addFlowNearbyFallbackEl = document.getElementById("add-flow-nearby-fallback");
+const addFlowBackNearbyEl = document.getElementById("add-flow-back-nearby");
 const addPickHintEl = document.getElementById("add-pick-hint");
 const addFlowRouteSummaryEl = document.getElementById("add-flow-route-summary");
 const addRouteInputEl = document.getElementById("add-route-input");
@@ -113,10 +124,12 @@ let suggestionSelectedViaTouch = false;
 let validateRouteToken = 0;
 let addState = {
   step: "idle",
+  mode: "nearby",
   route: "",
   direction: null,
   routeMeta: null,
   selectedStop: null,
+  stopRoutes: [],
   loadToken: 0,
 };
 let addToastTimer = null;
@@ -1223,12 +1236,21 @@ function yieldToPaint() {
   });
 }
 
+async function prefetchStopsIndex() {
+  try {
+    await ensureStopsIndex();
+  } catch {
+    // ignore prefetch failures
+  }
+}
+
 async function prefetchWatchlistGeometry() {
   if (didPrefetch) return;
   didPrefetch = true;
 
   await prefetchLeaflet();
   await prefetchRouteCatalog();
+  prefetchStopsIndex();
 
   for (const entry of watchlist) {
     try {
@@ -1343,13 +1365,38 @@ function updateDirectionLabels(meta) {
   addDirInboundEl.textContent = `${meta.destEn} → ${meta.origEn}`;
 }
 
+function filterNearbyStops(index, origin) {
+  return index
+    .map((stop) => ({
+      ...stop,
+      distanceM: haversineMeters(origin, stop),
+    }))
+    .filter((stop) => stop.distanceM <= NEARBY_STOP_RADIUS_M)
+    .sort((a, b) => a.distanceM - b.distanceM);
+}
+
 function paintAddFlowStep() {
   const step = addState.step;
   addFlowStepRouteEl.hidden = step !== "route";
   addFlowStepDirectionEl.hidden = step !== "direction";
+  if (addFlowStepNearbyEl) {
+    addFlowStepNearbyEl.hidden = step !== "nearby-loading";
+  }
+  if (addFlowStepStopRoutesEl) {
+    addFlowStepStopRoutesEl.hidden = step !== "stop-routes";
+  }
 
-  addFlowEl.hidden = step === "picking" || step === "idle";
-  addPickHintEl.hidden = step !== "picking";
+  addFlowEl.hidden =
+    step === "picking" || step === "nearby-picking" || step === "idle";
+  addPickHintEl.hidden = step !== "picking" && step !== "nearby-picking";
+
+  if (addPickHintEl) {
+    if (step === "nearby-picking") {
+      addPickHintEl.textContent = "Tap a nearby bus stop";
+    } else if (step === "picking") {
+      addPickHintEl.textContent = "Tap your boarding stop on the map";
+    }
+  }
 
   if (step === "direction" && addState.route) {
     addFlowRouteSummaryEl.textContent = addState.route;
@@ -1366,10 +1413,12 @@ function isAddFlowActive() {
 function resetAddState() {
   addState = {
     step: "idle",
+    mode: "nearby",
     route: "",
     direction: null,
     routeMeta: null,
     selectedStop: null,
+    stopRoutes: [],
     loadToken: addState.loadToken + 1,
   };
   addRouteInputEl.value = "";
@@ -1380,6 +1429,7 @@ function resetAddState() {
     exitAddPickMode({ youLatLng: getLastPosition() });
   }
   setAddError("");
+  if (addFlowStopRoutesEl) addFlowStopRoutesEl.innerHTML = "";
   addFlowEl.hidden = true;
   if (addPickHintEl) addPickHintEl.hidden = true;
   paintAddFlowStep();
@@ -1417,15 +1467,212 @@ async function startAddFlow() {
   }
 
   resetAddState();
+  addState.mode = "nearby";
+  addState.step = "nearby-loading";
+  if (addFlowNearbyStatusEl) {
+    addFlowNearbyStatusEl.textContent = "Finding nearby stops…";
+  }
+  paintAddFlowStep();
+
+  startGeolocation();
+  prefetchRouteCatalog();
+  prefetchStopsIndex();
+  await loadNearbyStops();
+}
+
+async function switchToRouteEntry() {
+  const token = ++addState.loadToken;
+  addState.mode = "route";
   addState.step = "route";
+  addState.route = "";
+  addState.direction = null;
+  addState.routeMeta = null;
+  addState.selectedStop = null;
+  addState.stopRoutes = [];
+  if (isAddPickActive()) {
+    exitAddPickMode({ youLatLng: getLastPosition() });
+  }
+  addRouteInputEl.value = "";
+  hideRouteSuggestions();
+  setAddError("");
+  if (addFlowStopRoutesEl) addFlowStopRoutesEl.innerHTML = "";
   paintAddFlowStep();
 
   await yieldToPaint();
-  if (!isAddFlowActive()) return;
-
+  if (token !== addState.loadToken || !isAddFlowActive()) return;
   addRouteInputEl.focus();
+}
+
+async function switchToNearbyEntry() {
+  if (isAddPickActive()) {
+    exitAddPickMode({ youLatLng: getLastPosition() });
+  }
+  addRouteInputEl.value = "";
+  hideRouteSuggestions();
+  addState.mode = "nearby";
+  addState.route = "";
+  addState.direction = null;
+  addState.routeMeta = null;
+  addState.selectedStop = null;
+  addState.stopRoutes = [];
+  addState.step = "nearby-loading";
+  if (addFlowNearbyStatusEl) {
+    addFlowNearbyStatusEl.textContent = "Finding nearby stops…";
+  }
+  if (addFlowStopRoutesEl) addFlowStopRoutesEl.innerHTML = "";
+  setAddError("");
+  paintAddFlowStep();
   startGeolocation();
-  prefetchRouteCatalog();
+  await loadNearbyStops();
+}
+
+async function loadNearbyStops() {
+  const token = ++addState.loadToken;
+  setAddError("");
+
+  try {
+    const pos = await startGeolocation();
+    const origin = pos ?? LOCATION;
+    if (token !== addState.loadToken || !isAddFlowActive()) return;
+
+    const index = await ensureStopsIndex();
+    if (token !== addState.loadToken || !isAddFlowActive()) return;
+
+    const nearby = filterNearbyStops(index, origin);
+    if (!nearby.length) {
+      addState.step = "nearby-loading";
+      if (addFlowNearbyStatusEl) {
+        addFlowNearbyStatusEl.textContent = `No stops within ${NEARBY_STOP_RADIUS_M / 1000} km`;
+      }
+      setAddError("Try entering a route number instead");
+      paintAddFlowStep();
+      return;
+    }
+
+    addState.step = "nearby-picking";
+    paintAddFlowStep();
+
+    await yieldToPaint();
+    if (token !== addState.loadToken || !isAddFlowActive()) return;
+
+    await enterAddPickMode({
+      stops: nearby,
+      youLatLng: origin,
+      instantSelect: true,
+      onSelect: (stop) => {
+        if (token !== addState.loadToken || addState.step !== "nearby-picking") {
+          return;
+        }
+        selectNearbyStop(stop, token);
+      },
+      onPositionChange,
+      isStale: () => token !== addState.loadToken || !isAddFlowActive(),
+    });
+  } catch (err) {
+    if (token !== addState.loadToken) return;
+    addState.step = "nearby-loading";
+    if (addFlowNearbyStatusEl) {
+      addFlowNearbyStatusEl.textContent = "Could not load nearby stops";
+    }
+    setAddError(err.message || "Failed to load nearby stops");
+    paintAddFlowStep();
+  }
+}
+
+async function selectNearbyStop(stop, token = addState.loadToken) {
+  addState.selectedStop = stop;
+  setAddError("");
+
+  if (isAddPickActive()) {
+    exitAddPickMode({ youLatLng: getLastPosition() });
+  }
+
+  addState.step = "stop-routes";
+  if (addFlowStopSummaryEl) {
+    addFlowStopSummaryEl.textContent = stop.nameEn || "Stop";
+  }
+  if (addFlowStopRoutesEl) {
+    addFlowStopRoutesEl.innerHTML =
+      '<li class="add-flow__summary">Loading routes…</li>';
+  }
+  paintAddFlowStep();
+
+  try {
+    const routes = await fetchStopRoutes(stop.stopId);
+    if (token !== addState.loadToken || addState.step !== "stop-routes") return;
+
+    if (!routes.length) {
+      setAddError("No routes serve this stop");
+      if (addFlowStopRoutesEl) addFlowStopRoutesEl.innerHTML = "";
+      return;
+    }
+
+    addState.stopRoutes = routes;
+    await renderStopRoutes(routes);
+  } catch (err) {
+    if (token !== addState.loadToken) return;
+    setAddError(err.message || "Failed to load routes");
+    if (addFlowStopRoutesEl) addFlowStopRoutesEl.innerHTML = "";
+  }
+}
+
+async function renderStopRoutes(routes) {
+  const uniqueRoutes = [...new Set(routes.map((r) => r.route))];
+  const metaByRoute = new Map();
+  await Promise.all(
+    uniqueRoutes.map(async (route) => {
+      try {
+        const meta = await fetchRouteMeta(route);
+        metaByRoute.set(route, meta);
+      } catch {
+        // ignore per-route meta failures
+      }
+    })
+  );
+
+  if (!isAddFlowActive() || addState.step !== "stop-routes" || !addFlowStopRoutesEl) {
+    return;
+  }
+
+  addFlowStopRoutesEl.innerHTML = routes
+    .map((item) => {
+      const meta = metaByRoute.get(item.route);
+      const dest = routeDestForDirection(meta, item.direction);
+      const dirLabel = item.direction === "I" ? "In" : "Out";
+      const route = escapeHtml(item.route);
+      const destHtml = escapeHtml(dest || "—");
+      return `<li role="option"><button type="button" class="add-flow__route-item" data-route="${route}" data-direction="${item.direction}"><span class="add-flow__route-item-num">${route}</span><span class="add-flow__route-item-dest">${destHtml}</span><span class="add-flow__route-item-dir">${dirLabel}</span></button></li>`;
+    })
+    .join("");
+}
+
+async function selectStopRoute(route, direction) {
+  if (!route || !direction || !addState.selectedStop) return;
+
+  addState.route = route;
+  addState.direction = direction;
+  try {
+    addState.routeMeta = await fetchRouteMeta(route);
+  } catch {
+    addState.routeMeta = null;
+  }
+  confirmAddEntry();
+}
+
+async function backToNearbyPicking() {
+  addState.selectedStop = null;
+  addState.stopRoutes = [];
+  addState.route = "";
+  addState.direction = null;
+  addState.routeMeta = null;
+  if (addFlowStopRoutesEl) addFlowStopRoutesEl.innerHTML = "";
+  setAddError("");
+  addState.step = "nearby-loading";
+  if (addFlowNearbyStatusEl) {
+    addFlowNearbyStatusEl.textContent = "Finding nearby stops…";
+  }
+  paintAddFlowStep();
+  await loadNearbyStops();
 }
 
 async function validateAndLoadRoute(routeValue) {
@@ -1439,6 +1686,7 @@ async function validateAndLoadRoute(routeValue) {
     addState.routeMeta = null;
     addState.direction = null;
     addState.selectedStop = null;
+    addState.stopRoutes = [];
     addState.step = "route";
     setDirectionButtons(null);
     updateDirectionLabels(null);
@@ -1451,10 +1699,12 @@ async function validateAndLoadRoute(routeValue) {
   try {
     const meta = await fetchRouteMeta(route);
     if (token !== validateRouteToken || !isAddFlowActive()) return;
+    addState.mode = "route";
     addState.route = meta.route;
     addState.routeMeta = meta;
     addState.direction = null;
     addState.selectedStop = null;
+    addState.stopRoutes = [];
     addState.step = "direction";
     updateDirectionLabels(meta);
     setDirectionButtons(null);
@@ -1465,6 +1715,7 @@ async function validateAndLoadRoute(routeValue) {
     addState.routeMeta = null;
     addState.direction = null;
     addState.selectedStop = null;
+    addState.stopRoutes = [];
     addState.step = "route";
     setDirectionButtons(null);
     updateDirectionLabels(null);
@@ -1737,6 +1988,24 @@ document.getElementById("add-route-btn")?.addEventListener("click", (event) => {
     return;
   }
   startAddFlow();
+});
+
+addFlowRouteFallbackEl?.addEventListener("click", () => {
+  switchToRouteEntry();
+});
+
+addFlowNearbyFallbackEl?.addEventListener("click", () => {
+  switchToNearbyEntry();
+});
+
+addFlowBackNearbyEl?.addEventListener("click", () => {
+  backToNearbyPicking();
+});
+
+addFlowStopRoutesEl?.addEventListener("click", (event) => {
+  const btn = event.target.closest(".add-flow__route-item");
+  if (!btn) return;
+  selectStopRoute(btn.getAttribute("data-route"), btn.getAttribute("data-direction"));
 });
 
 addRouteInputEl?.addEventListener("input", () => {

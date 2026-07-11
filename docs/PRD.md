@@ -21,7 +21,8 @@ Personal use: mobile, Hong Kong, checking ETAs before leaving home or office.
 
 ### Watchlist editing
 
-- Circular **+** (floating above the watch-sheet, outside the sheet) starts an inline **add-flow** panel stacked above **+**: enter route → pick direction (route number centered, stacked chips) → tap a stop on the **main map** (glass name tooltip + **✓** on the pin; top-center pill hint) → tap **✓** to add. **+** becomes **×** while add-flow is active (tap to cancel). No back control after route entry — cancel via **×** only. Watchlist rows are not interactive during add-flow. Success shows a short toast above the anchor. While **two or more** routes are focused, the same control becomes clear-all **×** (scale pulse + slight red tint); with zero or one focused it stays **+**.
+- Circular **+** (floating above the watch-sheet, outside the sheet) starts an inline **add-flow** panel stacked above **+**. Default path: **nearby stops** within **1 km** of your location (or `LOCATION` in `config.js` when GPS is unavailable) — map shows pins, tap a stop → scrollable route list (route + direction + destination) → tap to add. Fallback **Enter route number instead** restores the original flow: type route → pick direction → tap stop on map → **✓**. From route entry, **Pick a nearby stop instead** switches back. **+** becomes **×** while add-flow is active (tap to cancel). No back control after route entry in the route-first path — cancel via **×** only. Watchlist rows are not interactive during add-flow. Success shows a short toast above the anchor. While **two or more** routes are focused, the same control becomes clear-all **×** (scale pulse + slight red tint); with zero or one focused it stays **+**.
+- Stop catalog is built once from route-stop lists + stop coords (idle-prefetched, cached 24h in localStorage). Routes at a stop come from data.gov.hk v1.1 `stop-route` (CTB only).
 - Add-flow paints immediately; route catalog stays in memory (idle-prefetched). Typing shows up to 8 prefix-matched suggestions in a liquid-glass dropdown **above** the route input (inset to match input width) — no full-route datalist in the DOM.
 - Main map shows OSRM road-snapped route polyline (stop-to-stop first, then upgraded), all stops on that direction, and your location when available; viewport auto-fits the path above the watch-sheet.
 - Added routes persist in browser localStorage; `js/config.js` seeds the list on first visit.
@@ -88,7 +89,7 @@ Personal use: mobile, Hong Kong, checking ETAs before leaving home or office.
 - Static site only — no backend, no build step, no framework.
 - Citybus (CTB) only via data.gov.hk API.
 - Watchlist in localStorage; `js/config.js` provides defaults on first visit.
-- Geolocation optional — app works without it (config order, no walkability dimming).
+- Geolocation optional — app works without it (config order, no walkability dimming; nearby add-flow falls back to `LOCATION`).
 - Third-party: OSRM, Leaflet, CARTO tiles.
 
 ## Non-goals
@@ -104,7 +105,7 @@ Personal use: mobile, Hong Kong, checking ETAs before leaving home or office.
 ### Next
 
 - [ ] Per-row stale/error indicator when API fails repeatedly
-- [ ] Clearer empty state when geolocation denied
+- [ ] Clearer empty state when geolocation denied (nearby add-flow shows config `LOCATION` fallback; dedicated denied UX still open)
 
 ### Later
 

@@ -1001,7 +1001,7 @@ export function isAddPickActive() {
 
 /**
  * Paint route stops on the main map for add-flow. Calls onSelect(stop) on tap.
- * @param {{ stops: object[], path?: object[], youLatLng?: object|null, onSelect?: Function, onPositionChange?: Function, isStale?: () => boolean }} options
+ * @param {{ stops: object[], path?: object[], youLatLng?: object|null, onSelect?: Function, onConfirm?: Function, onPositionChange?: Function, isStale?: () => boolean, instantSelect?: boolean }} options
  */
 export async function enterAddPickMode({
   stops = [],
@@ -1011,6 +1011,7 @@ export async function enterAddPickMode({
   onConfirm = null,
   onPositionChange = null,
   isStale = () => false,
+  instantSelect = false,
 } = {}) {
   addPickOnSelect = onSelect;
   addPickOnConfirm = onConfirm;
@@ -1049,6 +1050,10 @@ export async function enterAddPickMode({
     }).addTo(map);
 
     marker.on("click", () => {
+      if (instantSelect) {
+        addPickOnSelect?.(stop);
+        return;
+      }
       addPickSelectedId = stop.stopId;
       updateAddPickMarkerIcons();
       addPickOnSelect?.(stop);

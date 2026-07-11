@@ -111,3 +111,6 @@ export const MAX_BUS_REWIND_M = 400;
  * (Maps/Uber-style), measured from the top-half visual center.
  */
 export const IDLE_FOLLOW_WINDOW = 0.45;
+
+/** Radius (meters) for nearby-stop discovery when adding a route. */
+export const NEARBY_STOP_RADIUS_M = 1000;

@@ -45,7 +45,7 @@ Changes to `js/config.js` take effect after you push and GitHub Pages redeploys 
 
 ### In the app
 
-Tap **+** above the watchlist to add a route: enter the route number, pick direction, then tap your boarding stop on the map. Swipe a row left and tap Delete to remove it. Changes are saved in your browser's localStorage.
+Tap **+** above the watchlist to add a route: by default the map shows nearby bus stops within 1 km — tap a stop, then pick a route and direction from the list. Use **Enter route number instead** for the original flow (type route → direction → tap stop on map). Swipe a row left and tap Delete to remove it. Changes are saved in your browser's localStorage.
 
 ### Via config (optional seed)
 
@@ -92,7 +92,7 @@ Reload the page after config changes (only affects browsers without a saved watc
 See [docs/PRD.md](docs/PRD.md) for full product behavior. Summary:
 
 - Fetches ETAs from the [Citybus V2 API](http://citybus.com.hk/datagovhk/bus_eta_api_specifications.pdf) (`rt.data.gov.hk`)
-- Add/remove routes in-app (+ button); watchlist persists in localStorage
+- Add/remove routes in-app (+ button); default nearby-stop picker within 1 km; route-number entry as fallback; watchlist persists in localStorage
 - Shows the next 1–2 upcoming arrivals per watchlisted stop + direction
 - Auto-refreshes every 5 seconds (status row shows countdown to next refresh); tap empty watch-sheet padding (outside rows) to refresh manually
 - Sorts by distance when geolocation is available; dims stops beyond ~20 min walk

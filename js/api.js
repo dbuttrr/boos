@@ -11,12 +11,20 @@ const stopInflight = new Map();
 const routeStopInflight = new Map();
 const routeListInflight = new Map();
 const routeMetaInflight = new Map();
+const stopRouteCache = new Map();
+const stopRouteInflight = new Map();
+let stopsIndexCache = null;
+let stopsIndexInflight = null;
 
 const ETA_CACHE_TTL_MS = 15_000;
 const STOP_TTL_MS = 24 * 60 * 60 * 1000;
 const ROUTE_STOP_TTL_MS = 24 * 60 * 60 * 1000;
 const ROUTE_LIST_TTL_MS = 24 * 60 * 60 * 1000;
 const ROUTE_META_TTL_MS = 24 * 60 * 60 * 1000;
+const STOP_ROUTE_TTL_MS = 24 * 60 * 60 * 1000;
+const STOPS_INDEX_TTL_MS = 24 * 60 * 60 * 1000;
+const STOPS_INDEX_STORAGE_KEY = "bus:stops-index:CTB";
+const STOPS_INDEX_BATCH = 20;
 
 function parseIsoMs(iso) {
   if (!iso) return null;
@@ -334,6 +342,130 @@ export async function resolveRouteStopCoords(routeStops) {
 export async function prefetchRouteGeometry(entry) {
   const routeStops = await fetchRouteStops(entry.route, entry.direction);
   return resolveRouteStopCoords(routeStops);
+}
+
+export async function fetchStopRoutes(stopId) {
+  const cacheKey = stopId;
+  if (stopRouteCache.has(cacheKey)) {
+    return stopRouteCache.get(cacheKey);
+  }
+
+  const storageKey = `bus:stop-route:${stopId}`;
+  const stored = readCache(storageKey, STOP_ROUTE_TTL_MS);
+  if (stored) {
+    stopRouteCache.set(cacheKey, stored);
+    return stored;
+  }
+
+  if (stopRouteInflight.has(cacheKey)) {
+    return stopRouteInflight.get(cacheKey);
+  }
+
+  const promise = (async () => {
+    const payload = await fetchJson(
+      `https://rt.data.gov.hk/v1.1/transport/batch/stop-route/CTB/${stopId}`
+    );
+    const routes = (payload.data ?? [])
+      .filter((item) => item.co === "CTB" && item.route && item.dir)
+      .map((item) => ({
+        route: item.route,
+        direction: item.dir,
+        seq: item.seq,
+      }))
+      .sort((a, b) =>
+        a.route.localeCompare(b.route, undefined, { numeric: true })
+      );
+
+    stopRouteCache.set(cacheKey, routes);
+    writeCache(storageKey, routes);
+    return routes;
+  })().finally(() => {
+    stopRouteInflight.delete(cacheKey);
+  });
+
+  stopRouteInflight.set(cacheKey, promise);
+  return promise;
+}
+
+async function buildStopsIndex() {
+  const routes = await fetchRoutes();
+  const stopIds = new Set();
+
+  for (let i = 0; i < routes.length; i += STOPS_INDEX_BATCH) {
+    const batch = routes.slice(i, i + STOPS_INDEX_BATCH);
+    await Promise.all(
+      batch.map(async (item) => {
+        for (const direction of ["O", "I"]) {
+          try {
+            const routeStops = await fetchRouteStops(item.route, direction);
+            for (const rs of routeStops) {
+              stopIds.add(rs.stopId);
+            }
+          } catch {
+            // ignore per-route failures
+          }
+        }
+      })
+    );
+  }
+
+  const ids = [...stopIds];
+  const stops = [];
+
+  for (let i = 0; i < ids.length; i += STOPS_INDEX_BATCH) {
+    const batch = ids.slice(i, i + STOPS_INDEX_BATCH);
+    const resolved = await Promise.all(
+      batch.map(async (id) => {
+        try {
+          const stop = await fetchStop(id);
+          return {
+            stopId: stop.id,
+            nameEn: stop.nameEn,
+            lat: stop.lat,
+            lng: stop.lng,
+          };
+        } catch {
+          return null;
+        }
+      })
+    );
+    stops.push(...resolved.filter(Boolean));
+  }
+
+  return stops;
+}
+
+/**
+ * CTB stop catalog with coords — built from route-stop lists, cached 24h.
+ */
+export async function ensureStopsIndex() {
+  if (stopsIndexCache) {
+    return stopsIndexCache;
+  }
+
+  const stored = readCache(STOPS_INDEX_STORAGE_KEY, STOPS_INDEX_TTL_MS);
+  if (stored?.length) {
+    stopsIndexCache = stored;
+    return stored;
+  }
+
+  if (stopsIndexInflight) {
+    return stopsIndexInflight;
+  }
+
+  stopsIndexInflight = buildStopsIndex()
+    .then((index) => {
+      stopsIndexCache = index;
+      writeCache(STOPS_INDEX_STORAGE_KEY, index);
+      stopsIndexInflight = null;
+      return index;
+    })
+    .catch((err) => {
+      stopsIndexInflight = null;
+      throw err;
+    });
+
+  return stopsIndexInflight;
 }
 
 export function formatTime(isoString) {
