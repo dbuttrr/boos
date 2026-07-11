@@ -138,33 +138,25 @@ body {
 
 /* Full-bleed Leaflet stage — active framing is the top half.
    Fixed stage background stays transparent (iOS 26 samples it for
-   status-bar chrome). With black-translucent, content starts under the
-   status bar but height can fall short by the same inset — extend the
-   bottom by safe-area-inset-top so the map fills that gap. */
+   status-bar chrome). Height is driven by --map-stage-height from
+   map.js so PWA covers the home-indicator band; CSS env() is fallback. */
 .map-stage {
   position: fixed;
   top: 0;
   right: 0;
   left: 0;
-  bottom: calc(-1 * env(safe-area-inset-top, 0px));
+  bottom: auto;
+  height: var(
+    --map-stage-height,
+    calc(100dvh + env(safe-area-inset-bottom, 0px))
+  );
+  min-height: -webkit-fill-available;
   z-index: 0;
   background: transparent;
 }
 
-/* Absolute fill — not sampled for chrome tint; covers bottom while tiles load */
-.map-stage::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  background: var(--bg);
-  pointer-events: none;
-}
-
 .map-stage__map,
 .map-stage .leaflet-container {
-  position: relative;
-  z-index: 1;
   width: 100%;
   height: 100%;
   background: transparent !important;
@@ -172,7 +164,10 @@ body {
 
 /* Liquid-glass watchlist over the bottom half of the map.
    Equal inset on left/right/bottom (0.75rem); ignores home-indicator
-   safe-area so the bottom gutter matches the sides. */
+   safe-area so the bottom gutter matches the sides.
+   Glass lives on ::before — iOS 26 samples background/backdrop-filter on
+   the fixed element itself and would paint a grey band into the home
+   indicator if those styles stayed on .watch-sheet. */
 .watch-sheet {
   position: fixed;
   left: var(--watch-sheet-inset);
@@ -186,11 +181,19 @@ body {
   border-radius: var(--radius-watch-sheet);
   overflow: hidden;
   isolation: isolate;
+  border: 1px solid transparent;
+  background: transparent;
+  box-shadow: none;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
-.watch-sheet,
-.add-flow {
+.watch-sheet::before,
+.add-flow::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
   border: 1px solid var(--focus-glass-border);
   background-color: var(--watch-sheet-glass, var(--focus-glass));
   background-image: linear-gradient(
@@ -201,6 +204,19 @@ body {
   box-shadow: var(--focus-shadow);
   backdrop-filter: blur(22px) saturate(1.5);
   -webkit-backdrop-filter: blur(22px) saturate(1.5);
+  pointer-events: none;
+}
+
+.watch-sheet > *,
+.add-flow > * {
+  position: relative;
+  z-index: 1;
+}
+
+.add-flow {
+  border: 1px solid transparent;
+  background: transparent;
+  box-shadow: none;
 }
 
 .watch-sheet__status {

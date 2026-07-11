@@ -89,6 +89,67 @@ export const ROUTE_COLORS = [
 
 const mapEl = () => document.getElementById("focus-map");
 
+let mapStageResizeBound = false;
+
+function isStandaloneDisplay() {
+  return (
+    window.matchMedia("(display-mode: standalone)").matches ||
+    window.matchMedia("(display-mode: fullscreen)").matches ||
+    Boolean(window.navigator.standalone)
+  );
+}
+
+/** Read env(safe-area-inset-*) via a probe (JS cannot parse env() directly). */
+function measureSafeAreaInsets() {
+  const box = document.createElement("div");
+  box.style.cssText =
+    "position:fixed;inset:0;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);visibility:hidden;pointer-events:none;";
+  document.body.appendChild(box);
+  const cs = getComputedStyle(box);
+  const insets = {
+    top: parseFloat(cs.paddingTop) || 0,
+    right: parseFloat(cs.paddingRight) || 0,
+    bottom: parseFloat(cs.paddingBottom) || 0,
+    left: parseFloat(cs.paddingLeft) || 0,
+  };
+  box.remove();
+  return insets;
+}
+
+/**
+ * Size the map stage to the real screen — iOS PWA layout viewport often
+ * stops above the home indicator, leaving a grey body strip if we only use
+ * inset:0 / 100dvh.
+ */
+function syncMapStageHeight() {
+  const root = document.documentElement;
+  const insets = measureSafeAreaInsets();
+  const vv = window.visualViewport;
+  const visualBottom = vv ? vv.height + vv.offsetTop : window.innerHeight;
+  let height = Math.max(window.innerHeight, visualBottom);
+
+  if (isStandaloneDisplay()) {
+    // Cover the physical screen; home-indicator band is inside screen.height.
+    height = Math.max(height, window.screen.height || 0, window.screen.availHeight || 0);
+  }
+
+  // Always include bottom inset in case layout height excludes it.
+  height = Math.max(height, window.innerHeight + insets.bottom);
+
+  root.style.setProperty("--map-stage-height", `${Math.ceil(height)}px`);
+  map?.invalidateSize({ animate: false });
+}
+
+function bindMapStageResize() {
+  if (mapStageResizeBound) return;
+  mapStageResizeBound = true;
+  const onResize = () => syncMapStageHeight();
+  window.addEventListener("resize", onResize);
+  window.visualViewport?.addEventListener("resize", onResize);
+  window.visualViewport?.addEventListener("scroll", onResize);
+  window.addEventListener("orientationchange", onResize);
+}
+
 function getAppTheme() {
   return document.documentElement.dataset.theme === "dark" ? "dark" : "light";
 }
@@ -413,11 +474,17 @@ export async function initMapStage({
   center = DEFAULT_CENTER,
   youLatLng = null,
 } = {}) {
+  bindMapStageResize();
+  syncMapStageHeight();
   await ensureMap();
   await new Promise((r) => requestAnimationFrame(() => r()));
+  syncMapStageHeight();
   map.invalidateSize({ animate: false });
-  // PWA black-translucent can settle safe-area / viewport a frame later.
-  requestAnimationFrame(() => map?.invalidateSize({ animate: false }));
+  // PWA safe-area / screen metrics can settle a frame later.
+  requestAnimationFrame(() => {
+    syncMapStageHeight();
+    map?.invalidateSize({ animate: false });
+  });
 
   focusActive = false;
   idleFollow = true;
