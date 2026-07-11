@@ -70,8 +70,8 @@ const addFlowEl = document.getElementById("add-flow");
 const addFlowStackEl = document.querySelector(".add-flow-stack");
 const addFlowStepRouteEl = document.getElementById("add-flow-step-route");
 const addFlowStepDirectionEl = document.getElementById("add-flow-step-direction");
-const addFlowStepPickingEl = document.getElementById("add-flow-step-picking");
 const addFlowStepConfirmEl = document.getElementById("add-flow-step-confirm");
+const addPickHintEl = document.getElementById("add-pick-hint");
 const addFlowRouteSummaryEl = document.getElementById("add-flow-route-summary");
 const addRouteInputEl = document.getElementById("add-route-input");
 const addRouteSuggestionsEl = document.getElementById("add-route-suggestions");
@@ -1375,8 +1375,11 @@ function paintAddFlowStep() {
   const step = addState.step;
   addFlowStepRouteEl.hidden = step !== "route";
   addFlowStepDirectionEl.hidden = step !== "direction";
-  addFlowStepPickingEl.hidden = step !== "picking";
   addFlowStepConfirmEl.hidden = step !== "confirm";
+
+  addFlowEl.classList.toggle("add-flow--route", step === "route");
+  addFlowEl.hidden = step === "picking" || step === "idle";
+  addPickHintEl.hidden = step !== "picking";
 
   if (step === "direction" && addState.route) {
     addFlowRouteSummaryEl.textContent = addState.route;
@@ -1409,6 +1412,7 @@ function resetAddState() {
   setAddError("");
   updateConfirmLabel();
   addFlowEl.hidden = true;
+  if (addPickHintEl) addPickHintEl.hidden = true;
   paintAddFlowStep();
 }
 
@@ -1445,7 +1449,6 @@ async function startAddFlow() {
 
   resetAddState();
   addState.step = "route";
-  addFlowEl.hidden = false;
   paintAddFlowStep();
 
   await yieldToPaint();
