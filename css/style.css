@@ -45,6 +45,11 @@ html {
   --watch-sheet-inset: 0.75rem;
   --watch-sheet-height: 48dvh;
   --add-anchor-gap: 1rem;
+  /* Physical bottom edge for the sheet: layout viewport often excludes the
+     home-indicator band, so subtract that inset to keep the 0.75rem gutter. */
+  --watch-sheet-bottom: calc(
+    var(--watch-sheet-inset) - env(safe-area-inset-bottom, 0px)
+  );
   /* Inner cards (Find My–style rounded rects, not pills) */
   --radius-inner: 0.875rem;
   --radius-input: 0.75rem;
@@ -138,19 +143,14 @@ body {
 
 /* Full-bleed Leaflet stage — active framing is the top half.
    Fixed stage background stays transparent (iOS 26 samples it for
-   status-bar chrome). Height is driven by --map-stage-height from
-   map.js so PWA covers the home-indicator band; CSS env() is fallback. */
+   status-bar chrome). Extend into the home-indicator band so the map
+   (not body --bg) fills below the watch-sheet. */
 .map-stage {
   position: fixed;
   top: 0;
   right: 0;
   left: 0;
-  bottom: auto;
-  height: var(
-    --map-stage-height,
-    calc(100dvh + env(safe-area-inset-bottom, 0px))
-  );
-  min-height: -webkit-fill-available;
+  bottom: calc(0px - env(safe-area-inset-bottom, 0px));
   z-index: 0;
   background: transparent;
 }
@@ -172,7 +172,7 @@ body {
   position: fixed;
   left: var(--watch-sheet-inset);
   right: var(--watch-sheet-inset);
-  bottom: var(--watch-sheet-inset);
+  bottom: var(--watch-sheet-bottom);
   z-index: 20;
   display: flex;
   flex-direction: column;
@@ -413,7 +413,7 @@ body {
 /* Leaflet attribution on full-bleed map (above the watch-sheet) */
 .map-stage .leaflet-control-attribution {
   margin: 0 0
-    calc(var(--watch-sheet-height) + var(--watch-sheet-inset) + 0.75rem) 0 !important;
+    calc(var(--watch-sheet-height) + var(--watch-sheet-bottom) + 0.75rem) 0 !important;
   padding: 0.15rem 0.4rem !important;
   background: var(--focus-glass) !important;
   color: var(--text-subtle) !important;
@@ -660,7 +660,7 @@ body {
   left: 0;
   right: 0;
   bottom: calc(
-    var(--watch-sheet-inset) + var(--watch-sheet-height) + var(--add-anchor-gap)
+    var(--watch-sheet-bottom) + var(--watch-sheet-height) + var(--add-anchor-gap)
   );
   z-index: 30;
   display: flex;
@@ -926,7 +926,7 @@ body {
   position: fixed;
   left: 50%;
   bottom: calc(
-    var(--watch-sheet-inset) + var(--watch-sheet-height) + var(--add-anchor-gap) +
+    var(--watch-sheet-bottom) + var(--watch-sheet-height) + var(--add-anchor-gap) +
       var(--nav-add-size) + 0.5rem
   );
   z-index: 31;

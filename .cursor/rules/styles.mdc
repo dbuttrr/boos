@@ -28,7 +28,7 @@ Use `block__element--modifier`:
 
 ## Mobile & a11y
 
-- `viewport-fit=cover` for notched devices; PWA status bar uses `black-translucent` so the map can extend under the notch; fixed chrome (`.map-stage`, `.watch-sheet`, `.theme-toggle`, `.add-pick-hint`) keeps backgrounds/`backdrop-filter` off the fixed/positioned element itself (glass on `::before`) so iOS 26 does not tint status/home-indicator chrome grey; `.map-stage` height uses `--map-stage-height` from `map.js` (`screen.height` in standalone + safe-area probe) to cover the home-indicator band
+- `viewport-fit=cover` for notched devices; PWA status bar uses `black-translucent` so the map can extend under the notch; fixed chrome (`.map-stage`, `.watch-sheet`, `.theme-toggle`, `.add-pick-hint`) keeps backgrounds/`backdrop-filter` off the fixed/positioned element itself (glass on `::before`) so iOS 26 does not tint system chrome grey; `--watch-sheet-bottom` compensates for `safe-area-inset-bottom` so the sheet/map sit on the physical bottom edge (avoids the whole UI looking shifted up)
 - Touch-friendly targets; `aria-live="polite"` on dynamic sections (`#cards`)
 - `role="button"` + keyboard (`Enter`/`Space`) for interactive rows
 - `aria-label` / `aria-pressed` on each theme-toggle sun/moon button (no visual selected chrome)
