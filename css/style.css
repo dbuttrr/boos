@@ -587,6 +587,7 @@ body {
   background: var(--bg);
   background-image: var(--bg-wash);
   box-shadow: 0 12px 32px rgba(15, 20, 25, 0.18);
+  overflow: visible;
 }
 
 .add-flow[hidden] {
@@ -637,6 +638,7 @@ body {
 .add-flow__field {
   display: block;
   position: relative;
+  overflow: visible;
 }
 
 .add-flow__label {
@@ -667,20 +669,34 @@ body {
 
 .add-flow__suggestions {
   position: absolute;
+  z-index: 1;
   left: 0;
   right: 0;
-  bottom: calc(100% + 0.375rem);
-  top: auto;
+  top: calc(100% + 0.375rem);
   list-style: none;
   margin: 0;
   padding: 0;
   border: 1px solid var(--border);
   border-radius: 1rem;
   background: var(--bg);
-  overflow: hidden;
-  max-height: 10rem;
+  max-height: min(14rem, 36dvh);
+  overflow-x: hidden;
   overflow-y: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: var(--text-faint) transparent;
   box-shadow: 0 8px 24px rgba(15, 20, 25, 0.12);
+}
+
+.add-flow__suggestions::-webkit-scrollbar {
+  width: 6px;
+}
+
+.add-flow__suggestions::-webkit-scrollbar-thumb {
+  background: var(--text-faint);
+  border-radius: 999px;
 }
 
 .add-flow__suggestions[hidden] {
