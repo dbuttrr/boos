@@ -43,7 +43,8 @@ html {
   --watch-sheet-inset: 0.75rem;
   --watch-sheet-height: 48dvh;
   --watch-sheet-status-space: 2.5rem;
-  --watch-sheet-status-blur: 3.75rem;
+  --watch-sheet-status-tint: rgba(255, 255, 255, 0.06);
+  --watch-sheet-scroll-fade: 1.25rem;
   --add-anchor-gap: 1rem;
   /* Inner cards (Find My–style rounded rects, not pills) */
   --radius-inner: 0.875rem;
@@ -92,6 +93,7 @@ html {
   --focus-glass-highlight: rgba(255, 255, 255, 0.03);
   --focus-shadow: 0 14px 36px rgba(0, 0, 0, 0.4);
   --watch-sheet-glass: rgba(12, 16, 22, 0.28);
+  --watch-sheet-status-tint: rgba(12, 16, 22, 0.08);
   --row-glass: rgba(255, 255, 255, 0.09);
   --row-glass-border: rgba(255, 255, 255, 0.18);
   --row-glass-shadow: 0 8px 24px rgba(0, 0, 0, 0.35),
@@ -185,13 +187,13 @@ body {
   right: 0;
   z-index: 4;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: center;
   flex-wrap: wrap;
   gap: 0.35rem 0.5rem;
-  height: var(--watch-sheet-status-blur);
+  height: var(--watch-sheet-status-space);
   margin: 0;
-  padding: 0.7rem 1rem 0;
+  padding: 0 1rem;
   border: none;
   background: transparent;
   box-shadow: none;
@@ -210,23 +212,27 @@ body {
   position: absolute;
   inset: 0;
   z-index: -1;
-  background: transparent;
-  backdrop-filter: blur(24px) saturate(1.55);
-  -webkit-backdrop-filter: blur(24px) saturate(1.55);
+  background: linear-gradient(
+    to bottom,
+    transparent 0%,
+    var(--watch-sheet-status-tint) 30%,
+    var(--watch-sheet-status-tint) 65%,
+    transparent 100%
+  );
+  backdrop-filter: blur(20px) saturate(1.45);
+  -webkit-backdrop-filter: blur(20px) saturate(1.45);
   -webkit-mask-image: linear-gradient(
     to bottom,
     transparent 0%,
-    rgba(0, 0, 0, 0.45) 14%,
-    black 36%,
-    black 74%,
+    black 24%,
+    black 76%,
     transparent 100%
   );
   mask-image: linear-gradient(
     to bottom,
     transparent 0%,
-    rgba(0, 0, 0, 0.45) 14%,
-    black 36%,
-    black 74%,
+    black 24%,
+    black 76%,
     transparent 100%
   );
   pointer-events: none;
@@ -256,6 +262,16 @@ body {
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   scrollbar-width: none;
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0%,
+    black var(--watch-sheet-scroll-fade)
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0%,
+    black var(--watch-sheet-scroll-fade)
+  );
 }
 
 .cards::-webkit-scrollbar {
