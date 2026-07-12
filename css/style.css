@@ -104,9 +104,9 @@ html {
   --watch-sheet-status-tint-gradient: linear-gradient(
     to bottom,
     transparent 0%,
-    rgba(12, 16, 22, 0.03) 18%,
-    rgba(12, 16, 22, 0.08) 50%,
-    rgba(12, 16, 22, 0.03) 82%,
+    rgba(12, 16, 22, 0.06) 18%,
+    rgba(12, 16, 22, 0.14) 50%,
+    rgba(12, 16, 22, 0.06) 82%,
     transparent 100%
   );
   --row-glass: rgba(255, 255, 255, 0.09);
