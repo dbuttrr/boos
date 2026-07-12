@@ -34,7 +34,7 @@ Personal use: mobile, Hong Kong, checking ETAs before leaving home or office.
 - Each row shows route label, primary ETA, and secondary ETA when available.
 - Remarks (e.g. "No scheduled service") shown when API returns no upcoming ETA.
 - Errors shown inline per row.
-- Auto-refresh every 5 seconds (`REFRESH_INTERVAL_MS`); watch-sheet status shows last-updated plus a countdown to the next poll. A short frosted gradient below the status line softens the top edge of the scrolling list so rows fade out instead of clipping sharply.
+- Auto-refresh every 5 seconds (`REFRESH_INTERVAL_MS`); watch-sheet status shows last-updated plus a countdown to the next poll. A pinned `.watch-sheet__fade` overlay at the top of the sheet blurs and softens list rows as they scroll under the status line (status text stays sharp above it).
 - Tap outside rows (empty watch-sheet padding) to refresh manually.
 - Refreshes when tab becomes visible again.
 
