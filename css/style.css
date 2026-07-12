@@ -47,9 +47,9 @@ html {
   --watch-sheet-status-tint-gradient: linear-gradient(
     to bottom,
     transparent 0%,
-    rgba(255, 255, 255, 0.02) 18%,
-    rgba(255, 255, 255, 0.06) 50%,
-    rgba(255, 255, 255, 0.02) 82%,
+    rgba(255, 255, 255, 0.04) 18%,
+    rgba(255, 255, 255, 0.11) 50%,
+    rgba(255, 255, 255, 0.04) 82%,
     transparent 100%
   );
   --watch-sheet-scroll-fade: 1.25rem;
@@ -228,8 +228,8 @@ body {
   inset: 0;
   z-index: -1;
   background: var(--watch-sheet-status-tint-gradient);
-  backdrop-filter: blur(20px) saturate(1.45);
-  -webkit-backdrop-filter: blur(20px) saturate(1.45);
+  backdrop-filter: blur(var(--watch-sheet-status-blur)) saturate(1.5);
+  -webkit-backdrop-filter: blur(var(--watch-sheet-status-blur)) saturate(1.5);
   -webkit-mask-image: linear-gradient(
     to bottom,
     transparent 0%,
