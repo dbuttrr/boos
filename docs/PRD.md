@@ -34,7 +34,7 @@ Personal use: mobile, Hong Kong, checking ETAs before leaving home or office.
 - Each row shows route label, primary ETA, and secondary ETA when available.
 - Remarks (e.g. "No scheduled service") shown when API returns no upcoming ETA.
 - Errors shown inline per row.
-- Auto-refresh every 5 seconds (`REFRESH_INTERVAL_MS`); last-updated plus a countdown float over the top of the watch-sheet — a full-width, background-free `backdrop-filter` band blurs list rows across the whole line as they scroll underneath.
+- Auto-refresh every 5 seconds (`REFRESH_INTERVAL_MS`); last-updated plus a countdown float over the top of the watch-sheet — a full-width gradient `backdrop-filter` band (masked, no fill) blurs list rows more strongly as they scroll underneath.
 - Tap outside rows (empty watch-sheet padding) to refresh manually.
 - Refreshes when tab becomes visible again.
 
