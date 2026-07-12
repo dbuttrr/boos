@@ -43,7 +43,14 @@ html {
   --watch-sheet-inset: 0.75rem;
   --watch-sheet-height: 48dvh;
   --watch-sheet-status-space: 2.5rem;
-  --watch-sheet-status-tint: rgba(255, 255, 255, 0.06);
+  --watch-sheet-status-tint-gradient: linear-gradient(
+    to bottom,
+    transparent 0%,
+    rgba(255, 255, 255, 0.02) 18%,
+    rgba(255, 255, 255, 0.06) 50%,
+    rgba(255, 255, 255, 0.02) 82%,
+    transparent 100%
+  );
   --watch-sheet-scroll-fade: 1.25rem;
   --add-anchor-gap: 1rem;
   /* Inner cards (Find My–style rounded rects, not pills) */
@@ -93,7 +100,14 @@ html {
   --focus-glass-highlight: rgba(255, 255, 255, 0.03);
   --focus-shadow: 0 14px 36px rgba(0, 0, 0, 0.4);
   --watch-sheet-glass: rgba(12, 16, 22, 0.28);
-  --watch-sheet-status-tint: rgba(12, 16, 22, 0.08);
+  --watch-sheet-status-tint-gradient: linear-gradient(
+    to bottom,
+    transparent 0%,
+    rgba(12, 16, 22, 0.03) 18%,
+    rgba(12, 16, 22, 0.08) 50%,
+    rgba(12, 16, 22, 0.03) 82%,
+    transparent 100%
+  );
   --row-glass: rgba(255, 255, 255, 0.09);
   --row-glass-border: rgba(255, 255, 255, 0.18);
   --row-glass-shadow: 0 8px 24px rgba(0, 0, 0, 0.35),
@@ -212,27 +226,23 @@ body {
   position: absolute;
   inset: 0;
   z-index: -1;
-  background: linear-gradient(
-    to bottom,
-    transparent 0%,
-    var(--watch-sheet-status-tint) 30%,
-    var(--watch-sheet-status-tint) 65%,
-    transparent 100%
-  );
+  background: var(--watch-sheet-status-tint-gradient);
   backdrop-filter: blur(20px) saturate(1.45);
   -webkit-backdrop-filter: blur(20px) saturate(1.45);
   -webkit-mask-image: linear-gradient(
     to bottom,
     transparent 0%,
-    black 24%,
-    black 76%,
+    rgba(0, 0, 0, 0.45) 22%,
+    black 50%,
+    rgba(0, 0, 0, 0.45) 78%,
     transparent 100%
   );
   mask-image: linear-gradient(
     to bottom,
     transparent 0%,
-    black 24%,
-    black 76%,
+    rgba(0, 0, 0, 0.45) 22%,
+    black 50%,
+    rgba(0, 0, 0, 0.45) 78%,
     transparent 100%
   );
   pointer-events: none;
