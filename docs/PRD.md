@@ -34,7 +34,7 @@ Personal use: mobile, Hong Kong, checking ETAs before leaving home or office.
 - Each row shows route label, primary ETA, and secondary ETA when available.
 - Remarks (e.g. "No scheduled service") shown when API returns no upcoming ETA.
 - Errors shown inline per row.
-- Auto-refresh every 5 seconds (`REFRESH_INTERVAL_MS`); last-updated plus a countdown float as a glass pill over the top of the watch-sheet (not a header row) — list rows scroll underneath and soften via a short gradient below the pill.
+- Auto-refresh every 5 seconds (`REFRESH_INTERVAL_MS`); last-updated plus a countdown float over the top of the watch-sheet (plain text, no pill) — `backdrop-filter` blurs list rows only as they scroll underneath.
 - Tap outside rows (empty watch-sheet padding) to refresh manually.
 - Refreshes when tab becomes visible again.
 
@@ -46,7 +46,7 @@ Personal use: mobile, Hong Kong, checking ETAs before leaving home or office.
 
 ### Focus map
 
-- Full-bleed Leaflet map fills the viewport; watchlist sits in a more transparent liquid-glass sheet (`.watch-sheet`, `--watch-sheet-glass`) over the bottom half, inset equally on left/right/bottom (`0.75rem`; home-indicator safe-area ignored so the bottom gutter matches the sides). The sheet is scrollable list only; last-updated + “next Ns” countdown float in a glass pill (`.watch-sheet__status`) pinned over the top — rows pass underneath.
+- Full-bleed Leaflet map fills the viewport; watchlist sits in a more transparent liquid-glass sheet (`.watch-sheet`, `--watch-sheet-glass`) over the bottom half, inset equally on left/right/bottom (`0.75rem`; home-indicator safe-area ignored so the bottom gutter matches the sides). The sheet is scrollable list only; last-updated + “next Ns” countdown float as plain text (`.watch-sheet__status`) over the top — rows blur behind the text as they scroll under.
 - Idle (no row selected): Maps/Uber-style GPS follow — the you marker always tracks GPS, but the map recenters into the **top-half** active area only when you leave a soft follow window (`IDLE_FOLLOW_WINDOW` in `config.js`). Falls back to `LOCATION` in `config.js` until a fix arrives. You marker is slightly larger (36px hit area) for glanceability.
 - Tap a row to focus (tap again to deselect): map auto-fits your location, the boarding stop(s), and the estimated bus(es) into the top-half active area (asymmetric `fitBounds` padding / pan offset so the glass sheet does not cover framed markers) — deferred until layout settles so Leaflet has a real size. Each focused boarding stop shows a simple glass name bubble above the pin; text after the first comma wraps to a second, quieter line; if several focused routes share the same stop, only one label is shown.
 - Any number of routes can be focused at once; row/map colors cycle through a 6-color `ROUTE_COLORS` palette (blue, yellow, green, coral, violet, teal).
