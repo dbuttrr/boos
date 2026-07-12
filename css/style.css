@@ -43,6 +43,7 @@ html {
   --watch-sheet-inset: 0.75rem;
   --watch-sheet-height: 48dvh;
   --watch-sheet-status-space: 2.5rem;
+  --watch-sheet-status-blur: 32px;
   --watch-sheet-status-tint-gradient: linear-gradient(
     to bottom,
     transparent 0%,
