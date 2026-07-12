@@ -42,6 +42,7 @@ html {
   --radius-watch-sheet: 2.875rem;
   --watch-sheet-inset: 0.75rem;
   --watch-sheet-height: 48dvh;
+  --watch-sheet-status-space: 2.875rem;
   --add-anchor-gap: 1rem;
   /* Inner cards (Find My–style rounded rects, not pills) */
   --radius-inner: 0.875rem;
@@ -176,54 +177,58 @@ body {
   -webkit-backdrop-filter: blur(22px) saturate(1.5);
 }
 
-.watch-sheet__fade {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 2.75rem;
-  z-index: 3;
-  pointer-events: none;
-  background: linear-gradient(
-    to bottom,
-    transparent 0%,
-    var(--watch-sheet-glass) 58%,
-    transparent 100%
-  );
-  backdrop-filter: blur(10px) saturate(1.25);
-  -webkit-backdrop-filter: blur(10px) saturate(1.25);
-  -webkit-mask-image: linear-gradient(
-    to bottom,
-    transparent 0%,
-    black 42%,
-    black 72%,
-    transparent 100%
-  );
-  mask-image: linear-gradient(
-    to bottom,
-    transparent 0%,
-    black 42%,
-    black 72%,
-    transparent 100%
-  );
-}
-
 .watch-sheet__status {
-  position: relative;
+  position: absolute;
+  top: 0.65rem;
+  left: 50%;
   z-index: 4;
-  flex-shrink: 0;
   display: flex;
   align-items: baseline;
   justify-content: center;
   flex-wrap: wrap;
   gap: 0.35rem 0.5rem;
   margin: 0;
-  padding: 0.65rem 1rem 0.15rem;
+  padding: 0.4rem 0.875rem 0.55rem;
+  border: 1px solid var(--focus-glass-border);
+  border-radius: 999px;
+  background-color: var(--watch-sheet-glass, var(--focus-glass));
+  background-image: linear-gradient(
+    135deg,
+    var(--focus-glass-highlight) 0%,
+    transparent 42%
+  );
+  box-shadow: var(--focus-shadow);
+  backdrop-filter: blur(22px) saturate(1.5);
+  -webkit-backdrop-filter: blur(22px) saturate(1.5);
+  color: var(--text-subtle);
   font-size: 0.6875rem;
   font-weight: 500;
   letter-spacing: 0.01em;
-  color: var(--text-subtle);
+  line-height: 1.3;
   text-align: center;
+  white-space: nowrap;
+  pointer-events: none;
+  transform: translateX(-50%);
+}
+
+.watch-sheet__status::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  height: 1.125rem;
+  border-radius: 0 0 999px 999px;
+  pointer-events: none;
+  background: linear-gradient(
+    to bottom,
+    var(--watch-sheet-glass) 0%,
+    transparent 100%
+  );
+  backdrop-filter: blur(10px) saturate(1.25);
+  -webkit-backdrop-filter: blur(10px) saturate(1.25);
+  -webkit-mask-image: linear-gradient(to bottom, black 0%, transparent 100%);
+  mask-image: linear-gradient(to bottom, black 0%, transparent 100%);
 }
 
 .watch-sheet__countdown {
@@ -245,7 +250,7 @@ body {
   flex: 1;
   min-height: 0;
   gap: 0;
-  padding: 0.5rem 0.875rem 0.875rem;
+  padding: var(--watch-sheet-status-space) 0.875rem 0.875rem;
   overflow-x: hidden;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
