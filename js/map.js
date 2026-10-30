@@ -1,13 +1,13 @@
-import { BUS_MARKER_LERP, IDLE_FOLLOW_WINDOW, LOCATION } from "./config.js";
+import { CARTO_BASEMAP_API_KEY, IDLE_FOLLOW_WINDOW, LOCATION } from "./config.js";
+import { createPulseController } from "./pulse.js";
 
 let map = null;
 let tileLayer = null;
 let youMarker = null;
 /** @type {Map<string, { fullRouteLine: any, routeLine: any, stopMarker: any, stopDots: any[], busMarker: any, colorIndex: number }>} */
 let routeLayers = new Map();
-/** @type {Map<string, { lat: number, lng: number, targetLat: number, targetLng: number }>} */
-let busChase = new Map();
-let busChaseFrame = null;
+/** @type {ReturnType<typeof createPulseController> | null} */
+let pulseController = null;
 let fitFrame = 0;
 let leafletReady = null;
 let themeObserver = null;
@@ -21,8 +21,10 @@ let idleFollow = true;
 const IDLE_ZOOM = 15;
 const DEFAULT_CENTER = { lat: LOCATION.lat, lng: LOCATION.lng };
 
+const OSM_ATTR =
+  '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>';
 export const CARTO_ATTR =
-  '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/attributions">CARTO</a>';
+  `${OSM_ATTR} &copy; <a href="https://carto.com/attributions">CARTO</a>`;
 
 export const ROUTE_COLORS = [
   {
@@ -95,7 +97,7 @@ function getAppTheme() {
 
 export function cartoUrl(theme) {
   const style = theme === "dark" ? "dark_all" : "light_all";
-  return `https://{s}.basemaps.cartocdn.com/${style}/{z}/{x}/{y}{r}.png`;
+  return `https://{s}.basemaps.cartocdn.com/${style}/{z}/{x}/{y}{r}.png?key=${encodeURIComponent(CARTO_BASEMAP_API_KEY.trim())}`;
 }
 
 function approachLineStyle(theme, colorIndex = 0, { dual = false } = {}) {
@@ -119,6 +121,7 @@ function fullRouteLineStyle(theme) {
     lineJoin: "round",
   };
 }
+
 
 export function loadLeaflet() {
   if (window.L) return Promise.resolve(window.L);
@@ -158,6 +161,17 @@ export function youIcon() {
     html: `<span class="focus-marker__you"><span class="focus-marker__pulse"></span><span class="focus-marker__you-dot"></span></span>`,
     iconSize: [36, 36],
     iconAnchor: [18, 18],
+  });
+}
+
+function busIcon(colorIndex = 0) {
+  const L = window.L;
+  const palette = ROUTE_COLORS[colorIndex] ?? ROUTE_COLORS[0];
+  return L.divIcon({
+    className: `focus-marker focus-marker--bus ${palette.busClass}`,
+    html: `<span class="focus-marker__bus" aria-hidden="true"><span class="focus-marker__bus-body"></span></span>`,
+    iconSize: [30, 30],
+    iconAnchor: [15, 15],
   });
 }
 
@@ -274,30 +288,20 @@ export function stopDotIcon() {
   });
 }
 
-function busIcon(colorIndex = 0, { appearing = false } = {}) {
-  const L = window.L;
-  const palette = ROUTE_COLORS[colorIndex] ?? ROUTE_COLORS[0];
-  const appearClass = appearing ? " focus-marker--appearing" : "";
-  return L.divIcon({
-    className: `focus-marker focus-marker--bus ${palette.busClass}${appearClass}`,
-    html: `<span class="focus-marker__bus" aria-hidden="true"><span class="focus-marker__bus-body"></span></span>`,
-    iconSize: [30, 30],
-    iconAnchor: [15, 15],
-  });
-}
-
-const BUS_DISSOLVE_MS = 620;
-const SAND_CHIP_COUNT = 20;
-
 function applyTileTheme(theme) {
   if (!map || !window.L) return;
   if (theme === currentTheme && tileLayer) return;
 
   currentTheme = theme;
-  const next = window.L.tileLayer(cartoUrl(theme), {
+  const useCarto = Boolean(CARTO_BASEMAP_API_KEY.trim());
+  const next = window.L.tileLayer(useCarto
+    ? cartoUrl(theme)
+    : "https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
     maxZoom: 20,
-    attribution: CARTO_ATTR,
-    subdomains: "abcd",
+    maxNativeZoom: useCarto ? 20 : 19,
+    attribution: useCarto ? CARTO_ATTR : OSM_ATTR,
+    className: useCarto ? "map-tiles" : "map-tiles map-tiles--osm",
+    ...(useCarto ? { subdomains: "abcd" } : {}),
   });
 
   if (tileLayer) {
@@ -316,6 +320,9 @@ function applyTileTheme(theme) {
         approachLineStyle(theme, layer.colorIndex, { dual })
       );
     }
+  }
+  if (pulseController) {
+    pulseController.syncAllThemes(theme, dual);
   }
   if (addPickRouteLine) {
     addPickRouteLine.setStyle(addPickLineStyle(theme));
@@ -402,6 +409,7 @@ async function ensureMap() {
   map.setView([DEFAULT_CENTER.lat, DEFAULT_CENTER.lng], IDLE_ZOOM, {
     animate: false,
   });
+  pulseController = createPulseController(map);
   return map;
 }
 
@@ -441,173 +449,96 @@ function clearRouteLayer(layer) {
   }
 }
 
-function stopBusChase() {
-  if (busChaseFrame) {
-    cancelAnimationFrame(busChaseFrame);
-    busChaseFrame = null;
-  }
-  busChase.clear();
-}
-
-function ensureBusChaseLoop() {
-  if (busChaseFrame) return;
-  if (busChase.size === 0) return;
-
-  const tick = () => {
-    if (!map || busChase.size === 0) {
-      busChaseFrame = null;
-      return;
-    }
-
-    let anyMoving = false;
-    for (const [routeId, chase] of busChase) {
-      const layer = routeLayers.get(routeId);
-      if (!layer?.busMarker) continue;
-
-      const dLat = chase.targetLat - chase.lat;
-      const dLng = chase.targetLng - chase.lng;
-      if (Math.abs(dLat) > 1e-7 || Math.abs(dLng) > 1e-7) {
-        chase.lat += dLat * BUS_MARKER_LERP;
-        chase.lng += dLng * BUS_MARKER_LERP;
-        layer.busMarker.setLatLng([chase.lat, chase.lng]);
-        anyMoving = true;
-      } else {
-        chase.lat = chase.targetLat;
-        chase.lng = chase.targetLng;
-        layer.busMarker.setLatLng([chase.lat, chase.lng]);
-      }
-    }
-
-    busChaseFrame = anyMoving ? requestAnimationFrame(tick) : null;
-  };
-
-  busChaseFrame = requestAnimationFrame(tick);
-}
-
-function setBusMarkerPosition(
+/** Create or update approach-line pulse geometry when points/theme change. */
+export function ensureActiveSegmentGeometry(
   routeId,
-  busLatLng,
-  { smooth = false, dissolve = false, appear = false } = {}
+  { points, colorIndex, dual = false } = {}
 ) {
+  if (!map || !focusActive || !pulseController) return false;
+
+  if (!points?.length || points.length < 2) {
+    fadeOutActiveSegment(routeId);
+    return false;
+  }
+
+  const theme = getAppTheme();
+  const isNew = !pulseController.hasPulse(routeId);
+  const changed = pulseController.setGeometry(routeId, {
+    points,
+    colorIndex,
+    dual,
+    theme,
+  });
+
+  if (isNew && changed) scheduleFitToMarkers({ includeYou: true });
+  return changed;
+}
+
+/** Per-frame uniform dash motion on the remaining leg. */
+export function updateActiveSegmentMotion(
+  routeId,
+  { progress = 0, remainingM, dtMs = 16 } = {}
+) {
+  if (!map || !focusActive || !pulseController) return;
+  pulseController.setMotion(routeId, { progress, remainingM, dtMs });
+}
+
+/** Ensure geometry + apply one motion frame (initial sync / full refresh). */
+export function updateActiveSegment(
+  routeId,
+  { points, progress, remainingM, colorIndex, dual = false, dtMs = 0 } = {}
+) {
+  ensureActiveSegmentGeometry(routeId, { points, colorIndex, dual });
+  updateActiveSegmentMotion(routeId, { progress: progress ?? 0, remainingM, dtMs });
+}
+
+/** Fade out then remove the active segment nerve pulse for a route. */
+export function fadeOutActiveSegment(routeId) {
+  pulseController?.fadeOut(routeId);
+}
+
+/** Remove the active segment nerve pulse for a route immediately. */
+export function clearActiveSegment(routeId) {
+  pulseController?.clear(routeId);
+}
+
+/** Update or create the predicted bus marker for a route. Pass null to clear. */
+export function updateBusMarker(routeId, busLatLng) {
   if (!map || !focusActive) return;
   const layer = routeLayers.get(routeId);
   if (!layer) return;
   const L = window.L;
 
   if (!busLatLng) {
-    busChase.delete(routeId);
     if (layer.busMarker) {
-      if (dissolve) {
-        dissolveBusMarkerElement(layer, routeId);
-      } else {
-        map.removeLayer(layer.busMarker);
-        layer.busMarker = null;
-      }
+      map.removeLayer(layer.busMarker);
+      layer.busMarker = null;
     }
-    if (busChase.size === 0) stopBusChase();
     return;
   }
 
   if (!layer.busMarker) {
     layer.busMarker = L.marker([busLatLng.lat, busLatLng.lng], {
-      icon: busIcon(layer.colorIndex, { appearing: appear }),
-      title: "Approx. bus location",
-      zIndexOffset: 400,
+      icon: busIcon(layer.colorIndex),
+      title: "Bus",
+      zIndexOffset: 250,
+      interactive: false,
     }).addTo(map);
-    busChase.set(routeId, {
-      lat: busLatLng.lat,
-      lng: busLatLng.lng,
-      targetLat: busLatLng.lat,
-      targetLng: busLatLng.lng,
-    });
-    // Bus often appears after the first paint — frame you + stop + bus.
     scheduleFitToMarkers({ includeYou: true });
-    return;
-  }
-
-  // Dissolve owns the marker until timeout removal — do not move it.
-  const el = layer.busMarker.getElement?.() ?? layer.busMarker._icon;
-  if (el?.classList?.contains("focus-marker--dissolving")) return;
-
-  if (!smooth) {
-    busChase.set(routeId, {
-      lat: busLatLng.lat,
-      lng: busLatLng.lng,
-      targetLat: busLatLng.lat,
-      targetLng: busLatLng.lng,
-    });
-    layer.busMarker.setLatLng([busLatLng.lat, busLatLng.lng]);
-    return;
-  }
-
-  const chase = busChase.get(routeId);
-  if (chase) {
-    chase.targetLat = busLatLng.lat;
-    chase.targetLng = busLatLng.lng;
   } else {
-    const current = layer.busMarker.getLatLng();
-    busChase.set(routeId, {
-      lat: current.lat,
-      lng: current.lng,
-      targetLat: busLatLng.lat,
-      targetLng: busLatLng.lng,
-    });
+    layer.busMarker.setLatLng([busLatLng.lat, busLatLng.lng]);
   }
-  ensureBusChaseLoop();
 }
 
-function dissolveBusMarkerElement(layer, routeId) {
-  const marker = layer.busMarker;
-  if (!marker || !map) return Promise.resolve();
-
-  busChase.delete(routeId);
-
-  const el = marker.getElement?.() ?? marker._icon;
-  if (!el) {
-    map.removeLayer(marker);
-    if (layer.busMarker === marker) layer.busMarker = null;
-    return Promise.resolve();
-  }
-
-  el.classList.add("focus-marker--dissolving");
-  const bus = el.querySelector(".focus-marker__bus");
-  if (bus && !bus.querySelector(".focus-marker__sand")) {
-    const sand = document.createElement("span");
-    sand.className = "focus-marker__sand";
-    sand.setAttribute("aria-hidden", "true");
-    for (let i = 0; i < SAND_CHIP_COUNT; i++) {
-      const chip = document.createElement("span");
-      chip.className = "focus-marker__sand-chip";
-      chip.style.setProperty("--sand-i", String(i));
-      sand.appendChild(chip);
-    }
-    bus.appendChild(sand);
-  }
-
-  return new Promise((resolve) => {
-    window.setTimeout(() => {
-      if (map && layer.busMarker === marker) {
-        map.removeLayer(marker);
-        layer.busMarker = null;
-      }
-      busChase.delete(routeId);
-      resolve();
-    }, BUS_DISSOLVE_MS);
-  });
-}
-
-/** Dissolve then remove the bus marker for a route. */
-export function dissolveBusMarker(routeId) {
-  if (!map || !focusActive) return Promise.resolve();
-  const layer = routeLayers.get(routeId);
-  if (!layer?.busMarker) return Promise.resolve();
-  busChase.delete(routeId);
-  return dissolveBusMarkerElement(layer, routeId);
-}
-
-function clearRouteOverlays() {
+function clearRouteOverlays({ keepPulseIds = null } = {}) {
   if (!map) return;
-  stopBusChase();
+  if (keepPulseIds) {
+    for (const id of routeLayers.keys()) {
+      if (!keepPulseIds.has(id)) pulseController?.clear(id);
+    }
+  } else {
+    pulseController?.clearAll();
+  }
   for (const layer of routeLayers.values()) {
     clearRouteLayer(layer);
   }
@@ -647,9 +578,14 @@ function fitVisible(points, { animate = true } = {}) {
 
 function collectMarkerPoints({ includeYou = true } = {}) {
   const points = [];
-  for (const layer of routeLayers.values()) {
+  for (const [routeId, layer] of routeLayers) {
     if (layer.stopMarker) points.push(layer.stopMarker.getLatLng());
     if (layer.busMarker) points.push(layer.busMarker.getLatLng());
+    const latlngs = pulseController?.getLatLngs(routeId);
+    if (latlngs) {
+      points.push(latlngs[0]);
+      points.push(latlngs[latlngs.length - 1]);
+    }
   }
   if (includeYou && youMarker) points.push(youMarker.getLatLng());
   return points;
@@ -697,7 +633,6 @@ function paintRoute(route, theme, { dual = false, showStopLabel = true } = {}) {
   const polyline = route.polyline;
   const routePolyline = route.routePolyline;
   const stops = route.stops ?? [];
-  const busLatLng = route.busLatLng;
   const stopName =
     typeof boardingStop?.nameEn === "string" ? boardingStop.nameEn.trim() : "";
 
@@ -756,11 +691,13 @@ function paintRoute(route, theme, { dual = false, showStopLabel = true } = {}) {
     }).addTo(map);
   }
 
+  const busLatLng = route.busLatLng;
   if (busLatLng) {
     layer.busMarker = L.marker([busLatLng.lat, busLatLng.lng], {
-      icon: busIcon(colorIndex, { appearing: Boolean(route.busAppearing) }),
-      title: "Approx. bus location",
-      zIndexOffset: 400,
+      icon: busIcon(colorIndex),
+      title: "Bus",
+      zIndexOffset: 250,
+      interactive: false,
     }).addTo(map);
   }
 
@@ -779,7 +716,12 @@ function paintFocusRoutes(routes, { youLatLng = null, refit = true } = {}) {
   const multi = routes.length >= 2;
   const labeledStopIds = new Set();
 
-  clearRouteOverlays();
+  // ETA repainting must retain the dash phase on an unchanged physical leg.
+  // Routes without a valid active segment still clear their previous stream.
+  const keepPulseIds = new Set(routes
+    .filter((route) => route?.activeSegment?.points?.length >= 2)
+    .map((route) => route.id));
+  clearRouteOverlays({ keepPulseIds });
   if (youMarker) {
     map.removeLayer(youMarker);
     youMarker = null;
@@ -794,7 +736,23 @@ function paintFocusRoutes(routes, { youLatLng = null, refit = true } = {}) {
       route.id,
       paintRoute(route, theme, { dual: multi, showStopLabel })
     );
+    if (route.activeSegment?.points?.length >= 2) {
+      pulseController?.setGeometry(route.id, {
+        points: route.activeSegment.points,
+        colorIndex: route.colorIndex ?? 0,
+        dual: multi,
+        theme,
+      });
+      pulseController?.setMotion(route.id, {
+        progress: route.activeSegment.progress ?? 0,
+        remainingM: route.activeSegment.remainingM,
+        dtMs: 0,
+      });
+    }
   }
+
+  // Retained pulse paths must stay above the freshly appended base lines.
+  for (const route of routes) pulseController?.bringToFront(route?.id);
 
   if (youLatLng) {
     youMarker = L.marker([youLatLng.lat, youLatLng.lng], {
@@ -843,14 +801,6 @@ export function updateYouMarker(youLatLng, { refit = false } = {}) {
   if (refit || isNew) {
     scheduleFitToMarkers({ includeYou: true });
   }
-}
-
-export function updateBusMarker(
-  routeId,
-  busLatLng,
-  { smooth = false, dissolve = false, appear = false } = {}
-) {
-  setBusMarkerPosition(routeId, busLatLng, { smooth, dissolve, appear });
 }
 
 /** Leave route focus; resume idle GPS follow (map stays visible). */

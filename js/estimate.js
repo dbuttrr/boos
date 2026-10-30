@@ -1,5 +1,4 @@
 import {
-  ARRIVING_THRESHOLD_MIN,
   UPSTREAM_ETA_SAMPLE_SIZE,
   UPSTREAM_ETA_CACHE_TTL_MS,
   MIN_BUS_SPEED_M_PER_MIN,
@@ -12,7 +11,7 @@ import {
   resolveRouteStopCoords,
   trackingNowMs,
 } from "./api.js";
-import { roadSnapStops, roadSnapStopsChunked } from "./routing.js";
+import { roadSnapRoute } from "./routing.js";
 
 const EARTH_RADIUS_M = 6_371_000;
 
@@ -95,24 +94,7 @@ export function walkBackAlongPolyline(points, distanceM) {
 }
 
 /**
- * Nearest polyline cumDist to a lat/lng (for mapping stop coords onto road path).
- */
-export function nearestCumDist(points, target) {
-  if (!points.length) return 0;
-  let best = points[0];
-  let bestDist = haversineMeters(points[0], target);
-  for (let i = 1; i < points.length; i++) {
-    const d = haversineMeters(points[i], target);
-    if (d < bestDist) {
-      bestDist = d;
-      best = points[i];
-    }
-  }
-  return best.cumDist;
-}
-
-/**
- * Pick a spaced sample of upstream stop IDs (excluding boarding).
+ * Pick a spaced sample of upstream stop occurrences (excluding boarding).
  */
 export function sampleUpstreamStops(routeStops, boardingIndex, maxSamples) {
   if (boardingIndex <= 0 || maxSamples <= 0) return [];
@@ -122,12 +104,14 @@ export function sampleUpstreamStops(routeStops, boardingIndex, maxSamples) {
     return upstream;
   }
 
+  if (maxSamples === 1) return [upstream[upstream.length - 1]];
+
   const sampled = [];
   const step = (upstream.length - 1) / (maxSamples - 1);
   for (let i = 0; i < maxSamples; i++) {
     const idx = Math.round(i * step);
     const stop = upstream[idx];
-    if (!sampled.some((s) => s.stopId === stop.stopId)) {
+    if (!sampled.some((s) => Number(s.seq) === Number(stop.seq))) {
       sampled.push(stop);
     }
   }
@@ -239,133 +223,109 @@ function segmentSpeedMPerMin(a, b) {
 }
 
 /**
- * Drop upstream points whose ETA is later than a downstream stop.
- * Prefer mid-route evidence over terminus schedule noise so the marker
- * is not pinned at cumDist 0 until a future origin departure.
- * Chain must already be sorted by cumDist ascending.
+ * Keep the longest physically plausible chain ending at the downstream anchor.
+ * Input is in route order, with boarding last. Every retained leg must advance
+ * in distance and time without exceeding MAX_BUS_SPEED_M_PER_MIN. Slow legs
+ * remain valid. Ties prefer downstream evidence over terminus schedule noise.
  */
 export function sanitizeEtaChain(chain) {
-  if (!chain?.length) return chain ?? [];
-  const out = [];
-  for (const point of chain) {
-    while (out.length && point.etaMs < out[out.length - 1].etaMs) {
-      out.pop();
+  const points = (chain ?? []).filter(
+    (point) =>
+      point &&
+      Number.isFinite(point.cumDist) &&
+      point.cumDist >= 0 &&
+      Number.isFinite(point.etaMs)
+  );
+  if (!points.length) return [];
+
+  const lengths = points.map(() => 1);
+  const previous = points.map(() => -1);
+  for (let j = 1; j < points.length; j++) {
+    for (let i = j - 1; i >= 0; i--) {
+      const distance = points[j].cumDist - points[i].cumDist;
+      if (
+        distance > 0 &&
+        isPlausibleLeg(distance, points[i].etaMs, points[j].etaMs) &&
+        lengths[i] + 1 > lengths[j]
+      ) {
+        lengths[j] = lengths[i] + 1;
+        previous[j] = i;
+      }
     }
-    out.push(point);
   }
-  return out;
+
+  const result = [];
+  for (let i = points.length - 1; i !== -1; i = previous[i]) {
+    result.push(points[i]);
+  }
+  return result.reverse();
 }
 
 /**
- * Furthest approach stop the boarding bus has already passed (no matching
- * upstream ETA before boarding). Floors placement so default-speed cannot
- * snap the marker back to the terminus after mid-route ETAs disappear.
+ * Learn ETA-to-route numbering only from independent, unambiguous stop IDs.
+ * Citybus endpoints can use different sequence origins. Missing or conflicting
+ * evidence must not turn an API sequence into a guessed loop occurrence.
  */
-function passedStopFloor({
-  routeStops,
-  boardingIndex,
-  upstreamEtas,
-  first,
-  polyline,
-  stopCoordsById,
-  boardingCum,
-}) {
-  const byStopId = new Map(
-    (upstreamEtas ?? []).filter(Boolean).map((item) => [item.stopId, item])
-  );
-  let minCum = 0;
-
-  for (const rs of routeStops.slice(0, boardingIndex)) {
-    const item = byStopId.get(rs.stopId);
-    if (!item) continue;
-
-    const stopCoord = stopCoordsById.get(rs.stopId);
-    if (!stopCoord) continue;
-    const stopCum = nearestCumDist(polyline, stopCoord);
-    const distToBoardM = boardingCum - stopCum;
-
-    if (matchBusEta(item.eta, first, distToBoardM)?.eta) break;
-
-    minCum = Math.max(minCum, stopCum);
+export function inferEtaSequenceOffset(observations) {
+  const sequence = (value) => {
+    if (typeof value !== "number" && typeof value !== "string") return null;
+    const parsed = Number(value);
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+  };
+  const anchors = new Map();
+  let offset = null;
+  for (const item of observations ?? []) {
+    const canonical = sequence(item?.seq);
+    if (!item?.stopId || canonical == null) continue;
+    const prior = anchors.get(item.stopId);
+    if (prior && prior.seq !== canonical) return null;
+    for (const arrival of [item.eta?.first, item.eta?.second]) {
+      const apiSeq = sequence(arrival?.seq);
+      if (apiSeq == null) continue;
+      const candidate = apiSeq - canonical;
+      if (offset != null && candidate !== offset) return null;
+      offset = candidate;
+      anchors.set(item.stopId, { seq: canonical });
+    }
   }
-
-  return minCum;
+  return anchors.size >= 2 ? offset : null;
 }
 
-function buildEtaChain({
-  routeStops,
-  boardingIndex,
-  boardingStopId,
-  upstreamEtas,
-  first,
-  polyline,
-  stopCoordsById,
-  boardingCum,
-}) {
-  const byStopId = new Map(
-    (upstreamEtas ?? []).filter(Boolean).map((item) => [item.stopId, item])
+function buildEtaChain({ stops, upstreamEtas, first, boardingStop }) {
+  const bySeq = new Map(
+    (upstreamEtas ?? []).filter(Boolean).map((item) => [Number(item.seq), item])
   );
-  const chain = [];
+  const boardingCum = boardingStop.cumDist;
+  const boardEtaMs = new Date(first.eta).getTime();
+  const upstream = [];
 
-  for (const rs of routeStops.slice(0, boardingIndex + 1)) {
-    const stopCoord = stopCoordsById.get(rs.stopId);
-    if (!stopCoord) continue;
-
-    const cumDist =
-      rs.stopId === boardingStopId
-        ? boardingCum
-        : nearestCumDist(polyline, stopCoord);
-
-    let etaMs = null;
-    if (rs.stopId === boardingStopId) {
-      etaMs = new Date(first.eta).getTime();
-    } else {
-      const item = byStopId.get(rs.stopId);
-      if (!item) continue;
-      const matched = matchBusEta(item.eta, first, boardingCum - cumDist);
-      if (!matched?.eta) continue;
-      etaMs = new Date(matched.eta).getTime();
-    }
-
+  // Distances already belong to ordered OSRM legs. Repeated IDs or coordinates
+  // must retain their own route occurrence instead of finding a nearest copy.
+  for (const stop of stops.slice(0, -1)) {
+    const item = bySeq.get(Number(stop.seq));
+    if (!item || stop.cumDist < 0 || stop.cumDist >= boardingCum) continue;
+    const matched = matchBusEta(item.eta, first, boardingCum - stop.cumDist);
+    if (!matched?.eta) continue;
+    const etaMs = new Date(matched.eta).getTime();
     if (!Number.isFinite(etaMs)) continue;
-
-    chain.push({
-      stopId: rs.stopId,
-      seq: rs.seq,
-      etaMs,
-      cumDist,
-    });
+    upstream.push({ stopId: stop.stopId, seq: stop.seq, etaMs, cumDist: stop.cumDist });
   }
 
-  chain.sort((a, b) => a.cumDist - b.cumDist);
-
-  const deduped = [];
-  for (const point of chain) {
-    const prev = deduped[deduped.length - 1];
-    if (prev && prev.stopId === point.stopId) continue;
-    deduped.push(point);
-  }
-
-  const boardingPoint = deduped.find((p) => p.stopId === boardingStopId);
-  if (boardingPoint) {
-    boardingPoint.cumDist = boardingCum;
-  }
-
-  const boardEtaMs = boardingPoint?.etaMs;
-  const filtered =
-    boardEtaMs == null
-      ? deduped
-      : deduped.filter((p) => {
-          if (p.stopId === boardingStopId) return true;
-          return isPlausibleLeg(boardingCum - p.cumDist, p.etaMs, boardEtaMs);
-        });
-
-  return sanitizeEtaChain(filtered);
+  return sanitizeEtaChain([
+    ...upstream,
+    {
+      stopId: boardingStop.stopId,
+      seq: boardingStop.seq,
+      etaMs: boardEtaMs,
+      cumDist: boardingCum,
+    },
+  ]);
 }
 
 /**
- * Place bus along polyline using matched per-stop ETAs and synced tracking time.
- * @param {number} [minCum=0] - floor from passed upstream stops
+ * Place bus along polyline using a validated chain and current time.
+ * Validation happens when observations change, outside the animation loop.
+ * @param {number} [minCum=0] - explicit lower route bound
  */
 export function positionFromEtaChain(
   chain,
@@ -375,7 +335,7 @@ export function positionFromEtaChain(
   minCum = 0
 ) {
   if (!chain?.length || !polyline?.length) return null;
-  const floor = Math.max(0, minCum);
+  const floor = Math.max(0, Math.min(minCum, boardingCum));
 
   if (chain.length === 1) {
     const only = chain[0];
@@ -388,9 +348,12 @@ export function positionFromEtaChain(
     const minsUntil = (only.etaMs - trackingNowMs) / 60_000;
     return latLngFromCum(
       polyline,
-      Math.max(
-        floor,
-        only.cumDist - DEFAULT_BUS_SPEED_M_PER_MIN * Math.max(0, minsUntil)
+      Math.min(
+        only.cumDist,
+        Math.max(
+          floor,
+          only.cumDist - DEFAULT_BUS_SPEED_M_PER_MIN * Math.max(0, minsUntil)
+        )
       )
     );
   }
@@ -403,6 +366,7 @@ export function positionFromEtaChain(
       const progress = span > 0 ? (trackingNowMs - a.etaMs) / span : 0;
       const busCumDist = Math.min(
         boardingCum,
+        b.cumDist,
         Math.max(floor, a.cumDist + progress * (b.cumDist - a.cumDist))
       );
       return latLngFromCum(polyline, busCumDist);
@@ -412,26 +376,19 @@ export function positionFromEtaChain(
   const first = chain[0];
   if (trackingNowMs < first.etaMs) {
     const next = chain[1];
-    const last = chain[chain.length - 1];
-    // Use segment speed only when first→next is travel-time plausible;
-    // otherwise default — avoids 600 m/min × boarding ETA slamming to origin.
+    // Extrapolate upstream using the first credible leg, including slow traffic.
     const rawSpeed = segmentSpeedMPerMin(first, next);
-    const speed = clampSpeed(
+    const speed =
       rawSpeed != null &&
-        isPlausibleLeg(next.cumDist - first.cumDist, first.etaMs, next.etaMs)
+      isPlausibleLeg(next.cumDist - first.cumDist, first.etaMs, next.etaMs)
         ? rawSpeed
-        : DEFAULT_BUS_SPEED_M_PER_MIN
-    );
+        : DEFAULT_BUS_SPEED_M_PER_MIN;
     const minsUntilFirst = (first.etaMs - trackingNowMs) / 60_000;
     const fromFirst = first.cumDist - speed * minsUntilFirst;
-    // Prefer boarding-ETA placement when the lead chain point is terminus
-    // schedule noise (future origin ETA while the bus is already mid-route).
-    const minsToBoard = (last.etaMs - trackingNowMs) / 60_000;
-    const fromBoard =
-      minsToBoard > 0 ? last.cumDist - speed * minsToBoard : last.cumDist;
     const busCumDist = Math.min(
       boardingCum,
-      Math.max(floor, fromFirst, fromBoard)
+      first.cumDist,
+      Math.max(floor, fromFirst)
     );
     return latLngFromCum(polyline, busCumDist);
   }
@@ -455,6 +412,315 @@ export function positionFromEtaChain(
   }
 
   return latLngFromCum(polyline, floor);
+}
+
+/**
+ * Active stop-to-stop leg for segment pulse visualization.
+ * @returns {{ fromCum: number, toCum: number, progress: number, stopA: object|null, stopB: object|null, dotLatLng: { lat: number, lng: number }|null }|null}
+ */
+export function resolveActiveSegment(
+  chain,
+  polyline,
+  trackingNowMs,
+  boardingCum,
+  minCum = 0
+) {
+  if (!chain?.length || !polyline?.length) return null;
+  const floor = Math.max(0, minCum);
+
+  const placed = positionFromEtaChain(
+    chain,
+    polyline,
+    trackingNowMs,
+    boardingCum,
+    floor
+  );
+  if (!placed) return null;
+  const busCum = placed.cumDist;
+
+  function make(fromCum, toCum, progress, stopA = null, stopB = null) {
+    const lo = Math.min(fromCum, toCum);
+    const hi = Math.max(fromCum, toCum);
+    if (hi - lo < 1) return null;
+    const p = Math.max(0, Math.min(1, progress));
+    const dotCum = lo + p * (hi - lo);
+    const pt = pointAtCumDist(polyline, dotCum);
+    return {
+      fromCum: lo,
+      toCum: hi,
+      progress: p,
+      stopA,
+      stopB,
+      dotLatLng: pt
+        ? { lat: pt.lat, lng: pt.lng }
+        : { lat: placed.lat, lng: placed.lng },
+    };
+  }
+
+  if (chain.length === 1) {
+    const only = chain[0];
+    if (only.cumDist >= boardingCum - 1) {
+      return make(floor, boardingCum, 1, only, null);
+    }
+    if (trackingNowMs < only.etaMs) {
+      const span = only.cumDist - floor;
+      const progress = span > 0 ? (busCum - floor) / span : 0;
+      return make(floor, only.cumDist, progress, null, only);
+    }
+    const fromCum = Math.max(floor, only.cumDist);
+    const span = boardingCum - fromCum;
+    const progress = span > 0 ? (busCum - fromCum) / span : 1;
+    return make(fromCum, boardingCum, progress, only, null);
+  }
+
+  for (let i = 0; i < chain.length - 1; i++) {
+    const a = chain[i];
+    const b = chain[i + 1];
+    if (trackingNowMs >= a.etaMs && trackingNowMs < b.etaMs) {
+      const spanMs = b.etaMs - a.etaMs;
+      const progress = spanMs > 0 ? (trackingNowMs - a.etaMs) / spanMs : 0;
+      return make(
+        Math.max(floor, a.cumDist),
+        Math.min(boardingCum, b.cumDist),
+        progress,
+        a,
+        b
+      );
+    }
+  }
+
+  const first = chain[0];
+  if (trackingNowMs < first.etaMs) {
+    const toCum = Math.max(first.cumDist, floor + 1);
+    const span = toCum - floor;
+    const progress = span > 0 ? (busCum - floor) / span : 0;
+    return make(floor, toCum, progress, null, first);
+  }
+
+  const last = chain[chain.length - 1];
+  if (trackingNowMs >= last.etaMs) {
+    const prev = chain.length >= 2 ? chain[chain.length - 2] : null;
+    const fromCum = prev ? Math.max(floor, prev.cumDist) : floor;
+    return make(fromCum, boardingCum, 1, prev, last);
+  }
+
+  for (let i = chain.length - 2; i >= 0; i--) {
+    if (trackingNowMs >= chain[i].etaMs) {
+      const next = chain[i + 1];
+      return make(
+        Math.max(floor, chain[i].cumDist),
+        next.cumDist,
+        0,
+        chain[i],
+        next
+      );
+    }
+  }
+
+  return make(floor, boardingCum, 0, null, null);
+}
+
+/**
+ * Speed-fallback active segment when upstream ETA chain is unavailable.
+ */
+export function resolveSpeedFallbackSegment(
+  polyline,
+  boardingCum,
+  floor,
+  speedMPerMin,
+  boardEtaMs,
+  trackingNowMs
+) {
+  if (!polyline?.length || boardingCum == null || !speedMPerMin || !boardEtaMs) {
+    return null;
+  }
+  const minsLeft = (boardEtaMs - trackingNowMs) / 60_000;
+  if (minsLeft <= 0) return null;
+
+  const fromCum = Math.max(0, floor);
+  const toCum = boardingCum;
+  const span = toCum - fromCum;
+  if (span < 1) return null;
+
+  const estimatedCum = Math.max(
+    fromCum,
+    Math.min(toCum, toCum - speedMPerMin * minsLeft)
+  );
+  const progress = (estimatedCum - fromCum) / span;
+  const pt = pointAtCumDist(polyline, estimatedCum);
+
+  return {
+    fromCum,
+    toCum,
+    progress: Math.max(0, Math.min(1, progress)),
+    stopA: null,
+    stopB: null,
+    dotLatLng: pt ? { lat: pt.lat, lng: pt.lng } : null,
+  };
+}
+
+/**
+ * Extract polyline lat/lngs between two cumulative distances (low → high).
+ */
+export function slicePolylineBetween(polyline, fromCum, toCum) {
+  if (!polyline?.length || fromCum >= toCum) return [];
+
+  const start = pointAtCumDist(polyline, fromCum);
+  const end = pointAtCumDist(polyline, toCum);
+  if (!start || !end) return [];
+
+  const points = [[start.lat, start.lng]];
+  for (const p of polyline) {
+    if (p.cumDist > fromCum && p.cumDist < toCum) {
+      points.push([p.lat, p.lng]);
+    }
+  }
+  points.push([end.lat, end.lng]);
+  return points;
+}
+
+/** One cumulative-distance model for the marker and its approach pulse. */
+function busCumForEstimate(estimate, nowMs) {
+  if (
+    !estimate?.polyline?.length ||
+    !Number.isFinite(estimate.boardEtaMs) ||
+    !Number.isFinite(nowMs)
+  ) return null;
+  if (estimate.reason === "seq-1" || estimate.reason === "no-eta") return null;
+
+  const boardingCum =
+    estimate.boardingCumDist ??
+    estimate.boardingStop?.cumDist ??
+    estimate.polyline[estimate.polyline.length - 1]?.cumDist;
+  if (!Number.isFinite(boardingCum) || boardingCum <= 0) return null;
+
+  const floor = Math.max(0, Math.min(estimate.minCumDist ?? 0, boardingCum));
+
+  // A validated ETA chain is authoritative. Do not let a second countdown
+  // calculation move the marker beyond a stop whose arrival is still ahead.
+  if (estimate.etaChain?.length >= 2) {
+    return positionFromEtaChain(
+      estimate.etaChain,
+      estimate.polyline,
+      nowMs,
+      boardingCum,
+      floor
+    )?.cumDist ?? null;
+  }
+
+  const speed = Number.isFinite(estimate.speedMPerMin) && estimate.speedMPerMin > 0
+    ? clampSpeed(estimate.speedMPerMin)
+    : DEFAULT_BUS_SPEED_M_PER_MIN;
+  const minsLeft = Math.max(0, (estimate.boardEtaMs - nowMs) / 60_000);
+  return Math.max(floor, Math.min(boardingCum, boardingCum - speed * minsLeft));
+}
+
+/**
+ * Predicted bus lat/lng along the full approach polyline.
+ */
+export function resolveBusPlacement(estimate, nowMs) {
+  if (!estimate?.polyline?.length) return null;
+  if (estimate.reason === "seq-1" || estimate.reason === "no-eta") return null;
+
+  const cumDist = busCumForEstimate(estimate, nowMs);
+  if (cumDist == null) return null;
+
+  const pt = pointAtCumDist(estimate.polyline, cumDist);
+  if (!pt) return null;
+
+  return { lat: pt.lat, lng: pt.lng, cumDist: pt.cumDist };
+}
+
+/**
+ * Current physical stop-to-stop leg containing the shared bus placement.
+ */
+function resolveLegBetweenStops(stops, busCum, floor, boardingCum) {
+  if (!stops?.length) {
+    return { fromCum: floor, toCum: boardingCum };
+  }
+
+  const boundaries = [floor];
+  const sorted = [...stops]
+    .filter((s) => Number.isFinite(s.cumDist))
+    .sort((a, b) => a.cumDist - b.cumDist);
+
+  for (const stop of sorted) {
+    const cum = stop.cumDist;
+    if (cum > floor + 0.5 && cum < boardingCum - 0.5) {
+      if (boundaries[boundaries.length - 1] < cum - 0.5) {
+        boundaries.push(cum);
+      }
+    }
+  }
+
+  if (boardingCum > boundaries[boundaries.length - 1] + 0.5) {
+    boundaries.push(boardingCum);
+  }
+
+  if (boundaries.length < 2) {
+    return { fromCum: floor, toCum: boardingCum };
+  }
+
+  for (let i = 0; i < boundaries.length - 1; i++) {
+    const lo = boundaries[i];
+    const hi = boundaries[i + 1];
+    if (busCum >= lo && busCum < hi) {
+      return { fromCum: lo, toCum: hi };
+    }
+  }
+
+  return {
+    fromCum: boundaries[boundaries.length - 2],
+    toCum: boardingCum,
+  };
+}
+
+/**
+ * Nerve-pulse bounds from the same placement used to paint the bus marker.
+ * All physical stops bound the current leg, even when their ETAs are missing.
+ */
+export function resolveApproachPulse(
+  estimate,
+  nowMs,
+  placement = resolveBusPlacement(estimate, nowMs)
+) {
+  if (!placement || !estimate?.polyline?.length) return null;
+
+  const boardingCum =
+    estimate.boardingCumDist ??
+    estimate.boardingStop?.cumDist ??
+    estimate.polyline[estimate.polyline.length - 1]?.cumDist;
+  if (!Number.isFinite(boardingCum)) return null;
+  // Placement bounds do not change physical leg geometry. A conflicting bound
+  // must not put the pulse ahead of its bus.
+  const floor = Math.max(0, estimate.polyline[0].cumDist ?? 0);
+  const busCum = placement.cumDist;
+  if (!Number.isFinite(busCum)) return null;
+
+  const { fromCum, toCum } = resolveLegBetweenStops(
+    estimate.stops?.length ? estimate.stops : estimate.etaChain,
+    busCum,
+    floor,
+    boardingCum
+  );
+  const span = toCum - fromCum;
+  if (span < 1) return null;
+
+  const stops = estimate.stops;
+  const boardingStop =
+    estimate.boardingStop ?? (stops?.length ? stops[stops.length - 1] : null);
+  return {
+    fromCum,
+    toCum,
+    progress: Math.max(0, Math.min(1, (busCum - fromCum) / span)),
+    busCum,
+    boardingStop,
+  };
+}
+
+/** @deprecated Use resolveApproachPulse */
+export function resolveFinalLegPulse(estimate, nowMs) {
+  return resolveApproachPulse(estimate, nowMs);
 }
 
 function placeFromEtaChain(chain, polyline, trackingNowMs, boardingCum, minCum = 0) {
@@ -529,8 +795,7 @@ function placeFromSegments(
 
   const speedMPerMin = clampSpeed(rawSpeed);
   const remainingDist = speedMPerMin * minutesToBoard;
-  // Floor at minCum — do not snap to the nearest upstream sample (often
-  // the terminus at cumDist 0) when remainingDist exceeds boardingCum.
+  // Clamp to the route bounds, without inferring passage from missing ETAs.
   const busCumDist = Math.max(
     minCum,
     Math.min(boardingCum, boardingCum - remainingDist)
@@ -580,9 +845,13 @@ export async function estimateBusPosition(
   }
 
   const routeStops = await fetchRouteStops(entry.route, entry.direction);
-  const boardingIndex = routeStops.findIndex((s) => s.stopId === entry.stopId);
+  const etaSeq = first.seq == null ? null : Number(first.seq);
+  const hasEtaSeq = Number.isInteger(etaSeq) && etaSeq > 0;
+  const boardingMatches = routeStops
+    .map((stop, index) => ({ stop, index }))
+    .filter(({ stop }) => stop.stopId === entry.stopId);
 
-  if (boardingIndex < 0) {
+  if (!boardingMatches.length) {
     const boardingOnly = await resolveRouteStopCoords([
       { seq: 0, stopId: entry.stopId },
     ]);
@@ -602,73 +871,113 @@ export async function estimateBusPosition(
     );
   }
 
-  const approachStops = routeStops.slice(0, boardingIndex + 1);
   const allCoords = await resolveRouteStopCoords(routeStops);
   if (!allCoords.length) {
     return emptyEstimate({ reason: "no-coords", busChanged: handedOff });
   }
 
-  const stopCoordsById = new Map(allCoords.map((c) => [c.stopId, c]));
-  const boardingStopCoord = stopCoordsById.get(entry.stopId);
-  if (!boardingStopCoord) {
-    return emptyEstimate({ reason: "no-coords", busChanged: handedOff });
+  const counts = new Map();
+  for (const stop of routeStops) {
+    counts.set(stop.stopId, (counts.get(stop.stopId) ?? 0) + 1);
+  }
+  const repeatedBoarding = boardingMatches.length > 1;
+  const poolIndex = boardingMatches[boardingMatches.length - 1].index;
+  const pool = denseUpstream || repeatedBoarding
+    ? routeStops.slice(0, poolIndex)
+    : sampleUpstreamStops(routeStops, poolIndex, UPSTREAM_ETA_SAMPLE_SIZE);
+  const needsSequence = repeatedBoarding || pool.some((stop) => counts.get(stop.stopId) > 1);
+  const uniqueRequests = new Map(
+    pool.filter((stop) => counts.get(stop.stopId) === 1).map((stop) => [stop.stopId, stop])
+  );
+  // A unique boarding stop is itself an anchor. Add at most two unique route
+  // stops when sampled evidence alone cannot establish the sequence offset.
+  if (needsSequence) {
+    const target = repeatedBoarding ? 2 : 1;
+    for (const stop of routeStops) {
+      if (uniqueRequests.size >= target) break;
+      if (counts.get(stop.stopId) === 1 && stop.stopId !== entry.stopId) {
+        uniqueRequests.set(stop.stopId, stop);
+      }
+    }
   }
 
-  const coords = [];
-  for (const rs of approachStops) {
-    const c = stopCoordsById.get(rs.stopId);
-    if (c) coords.push(c);
-  }
-  if (!coords.length) {
-    return emptyEstimate({ reason: "no-coords", busChanged: handedOff });
-  }
-
-  const needUpstream =
-    boardingIndex > 0 && minutesToBoard > ARRIVING_THRESHOLD_MIN;
-
-  const upstreamStops = needUpstream
-    ? denseUpstream
-      ? routeStops.slice(0, boardingIndex)
-      : sampleUpstreamStops(routeStops, boardingIndex, UPSTREAM_ETA_SAMPLE_SIZE)
-    : [];
-
-  const [approachRoad, fullRoad, upstreamEtas] = await Promise.all([
-    roadSnapStops(coords),
-    roadSnapStopsChunked(allCoords),
-    needUpstream
-      ? Promise.all(
-          upstreamStops.map(async (rs) => {
-            try {
-              const eta = await fetchEta(
-                entry.route,
-                rs.stopId,
-                entry.direction,
-                {
-                  useCache: !refreshUpstream,
-                  cacheTtlMs: UPSTREAM_ETA_CACHE_TTL_MS,
-                }
-              );
-              return { stopId: rs.stopId, seq: rs.seq, eta };
-            } catch {
-              return null;
-            }
-          })
-        )
-      : Promise.resolve([]),
-  ]);
-
-  const polyline = buildPolyline(approachRoad);
-  const routePolyline = buildPolyline(fullRoad);
-  const boardingCum = nearestCumDist(polyline, boardingStopCoord);
-  const boardingStop = {
-    ...boardingStopCoord,
-    cumDist: boardingCum,
+  const loadUpstream = async (stop, stopSeq = null) => {
+    try {
+      const eta = await fetchEta(entry.route, stop.stopId, entry.direction, {
+        useCache: !refreshUpstream,
+        cacheTtlMs: UPSTREAM_ETA_CACHE_TTL_MS,
+        stopSeq,
+      });
+      return { stopId: stop.stopId, seq: stop.seq, eta };
+    } catch {
+      return null;
+    }
   };
-  const stops = coords.map((c) => ({
-    ...c,
-    cumDist: nearestCumDist(polyline, c),
-    isBoarding: c.stopId === entry.stopId,
+  const [road, uniqueEtas] = await Promise.all([
+    roadSnapRoute(allCoords),
+    Promise.all([...uniqueRequests.values()].map((stop) => loadUpstream(stop))),
+  ]);
+  const anchors = uniqueEtas.filter(Boolean);
+  if (!repeatedBoarding) {
+    anchors.push({ stopId: entry.stopId, seq: boardingMatches[0].stop.seq, eta: boardingEta });
+  }
+  const sequenceOffset = needsSequence ? inferEtaSequenceOffset(anchors) : null;
+  const selected = repeatedBoarding
+    ? hasEtaSeq && sequenceOffset != null
+      ? boardingMatches.find(({ stop }) => Number(stop.seq) === etaSeq - sequenceOffset)
+      : null
+    : boardingMatches[0];
+
+  if (!selected) {
+    // Keep physical stop/full-route context, but never choose a visit by ranking
+    // incomplete ETA groups or assuming both endpoints number stops alike.
+    const physical = allCoords.find((stop) => stop.stopId === entry.stopId);
+    return attachTrackingMeta({
+      ...emptyEstimate({ reason: "ambiguous-stop", busChanged: handedOff }),
+      routePolyline: buildPolyline(road.points),
+      boardingStop: physical ? {
+        stopId: physical.stopId, lat: physical.lat, lng: physical.lng, nameEn: physical.nameEn,
+      } : null,
+    }, boardingEta);
+  }
+
+  const boardingIndex = selected.index;
+  const boardingSeq = Number(selected.stop.seq);
+  const boardingCoordIndex = allCoords.findIndex(
+    (stop) => stop.stopId === entry.stopId && Number(stop.seq) === boardingSeq
+  );
+  if (boardingCoordIndex < 0) {
+    return emptyEstimate({ reason: "no-coords", busChanged: handedOff });
+  }
+  const upstreamStops = denseUpstream
+    ? routeStops.slice(0, boardingIndex)
+    : sampleUpstreamStops(routeStops, boardingIndex, UPSTREAM_ETA_SAMPLE_SIZE);
+  const uniqueById = new Map(anchors.map((item) => [item.stopId, item]));
+  const upstreamEtas = await Promise.all(upstreamStops.map((stop) => {
+    if (counts.get(stop.stopId) === 1) return uniqueById.get(stop.stopId) ?? null;
+    const apiSeq = sequenceOffset == null ? null : Number(stop.seq) + sequenceOffset;
+    if (!Number.isInteger(apiSeq) || apiSeq <= 0) return null;
+    return loadUpstream(stop, apiSeq);
   }));
+
+  // Build one full path. Both drawing and estimation use these same ordered
+  // boundaries, including every waypoint on long routes and repeated roads.
+  const routePolyline = buildPolyline(road.points);
+  const boardingPointIndex = road.stopIndices[boardingCoordIndex];
+  if (!routePolyline[boardingPointIndex]) {
+    return emptyEstimate({ reason: "no-geometry", busChanged: handedOff });
+  }
+  const polyline = routePolyline.slice(0, boardingPointIndex + 1);
+  const boardingCum = routePolyline[boardingPointIndex].cumDist;
+  const boardingStop = {
+    ...allCoords[boardingCoordIndex], cumDist: boardingCum, apiSeq: hasEtaSeq ? etaSeq : null,
+  };
+  const stops = allCoords.slice(0, boardingCoordIndex + 1).map((stop, i) => ({
+    ...stop,
+    cumDist: routePolyline[road.stopIndices[i]].cumDist,
+    isBoarding: i === boardingCoordIndex,
+  }));
+  const stopsBySeq = new Map(stops.map((stop) => [Number(stop.seq), stop]));
 
   const base = {
     polyline,
@@ -681,51 +990,29 @@ export async function estimateBusPosition(
     busChanged: handedOff,
   };
 
-  if (boardingIndex === 0) {
+  if (boardingIndex === 0 || boardingCum <= 0) {
     return attachTrackingMeta(
       {
         ...base,
         busLatLng: null,
         busCumDist: null,
-        reason: "seq-1",
-      },
-      boardingEta
-    );
-  }
-
-  if (minutesToBoard <= ARRIVING_THRESHOLD_MIN) {
-    return attachTrackingMeta(
-      {
-        ...base,
-        busLatLng: { lat: boardingStop.lat, lng: boardingStop.lng },
-        busCumDist: boardingCum,
-        reason: "arriving",
-        speedMPerMin: null,
+        reason: boardingIndex === 0 ? "seq-1" : "no-geometry",
       },
       boardingEta
     );
   }
 
   const etaChain = buildEtaChain({
-    routeStops,
-    boardingIndex,
-    boardingStopId: entry.stopId,
+    stops,
     upstreamEtas,
     first,
-    polyline,
-    stopCoordsById,
-    boardingCum,
+    boardingStop,
   });
 
-  const minCum = passedStopFloor({
-    routeStops,
-    boardingIndex,
-    upstreamEtas,
-    first,
-    polyline,
-    stopCoordsById,
-    boardingCum,
-  });
+  // An absent match (including empty/failed responses) is unknown, not proof
+  // that this bus passed a stop. Only retained ETA observations constrain its
+  // progress; fallback placement keeps the route origin as its lower bound.
+  const minCum = polyline[0]?.cumDist ?? 0;
 
   if (denseUpstream && etaChain.length >= 2) {
     const segmentPlaced = placeFromEtaChain(
@@ -757,10 +1044,10 @@ export async function estimateBusPosition(
   for (const item of upstreamEtas) {
     if (!item) continue;
 
-    const stopCoord = stopCoordsById.get(item.stopId);
-    if (!stopCoord) continue;
+    const stop = stopsBySeq.get(Number(item.seq));
+    if (!stop) continue;
 
-    const upCum = nearestCumDist(polyline, stopCoord);
+    const upCum = stop.cumDist;
     const dist = boardingCum - upCum;
     if (dist <= 0) continue;
 

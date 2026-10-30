@@ -1,4 +1,5 @@
 import { readCache, writeCache } from "./cache.js";
+import { ETA_REQUEST_TIMEOUT_MS } from "./config.js";
 
 const BASE_URL = "https://rt.data.gov.hk/v2/transport/citybus";
 
@@ -7,6 +8,7 @@ const routeStopCache = new Map();
 const routeListCache = new Map();
 const routeMetaCache = new Map();
 const etaCache = new Map();
+const etaPayloadInflight = new Map();
 const stopInflight = new Map();
 const routeStopInflight = new Map();
 const routeListInflight = new Map();
@@ -40,19 +42,27 @@ function snapshotMsFromPayload(payload, first, second) {
   return parseIsoMs(payload.generated_timestamp);
 }
 
-/** Advance API snapshot time using local clock since fetch. */
-export function trackingNowMs(etaBundle) {
-  if (etaBundle?.snapshotMs == null || etaBundle?.receivedAtMs == null) {
-    return Date.now();
-  }
-  return etaBundle.snapshotMs + (Date.now() - etaBundle.receivedAtMs);
+/** Current time for absolute ETAs; snapshot timestamps describe data freshness. */
+export function trackingNowMs() {
+  return Date.now();
 }
 
-function pickArrivals(entries, direction) {
+/** Position-relevant source identity; receiving the same data is not a revision. */
+export function etaModelKey(result) {
+  const arrivals = [result?.first, result?.second].map((entry) => entry
+    ? [entry.eta ?? null, entry.seq ?? null, entry.dir ?? null, entry.dest_en ?? null]
+    : null);
+  return JSON.stringify([result?.snapshotMs ?? null, ...arrivals]);
+}
+
+function pickArrivals(entries, direction, stopSeq = null) {
   let filtered = entries;
 
   if (direction) {
     filtered = entries.filter((e) => e.dir === direction);
+  }
+  if (stopSeq != null) {
+    filtered = filtered.filter((e) => Number(e.seq) === stopSeq);
   }
 
   const upcoming = filtered
@@ -90,30 +100,41 @@ export function formatArrivalDisplay(entry) {
   return { text: formatTime(entry.eta), variant: "default" };
 }
 
-async function fetchJson(url) {
-  const response = await fetch(url);
+async function fetchJson(url, { timeoutMs = null } = {}) {
+  const controller = timeoutMs == null ? null : new AbortController();
+  const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+  try {
+    const response = await fetch(url, controller ? { signal: controller.signal } : undefined);
 
-  if (!response.ok) {
-    let message = `HTTP ${response.status}`;
-    try {
-      const body = await response.json();
-      if (body.message) message = body.message;
-    } catch {
-      // ignore parse errors
+    if (!response.ok) {
+      let message = `HTTP ${response.status}`;
+      try {
+        const body = await response.json();
+        if (body.message) message = body.message;
+      } catch {
+        // ignore parse errors
+      }
+      throw new Error(message);
     }
-    throw new Error(message);
-  }
 
-  return response.json();
+    return await response.json();
+  } catch (err) {
+    if (controller?.signal.aborted) throw new Error("ETA request timed out");
+    throw err;
+  } finally {
+    if (timer != null) clearTimeout(timer);
+  }
 }
 
 export async function fetchEta(
   route,
   stopId,
   direction,
-  { useCache = false, cacheTtlMs = ETA_CACHE_TTL_MS } = {}
+  { useCache = false, cacheTtlMs = ETA_CACHE_TTL_MS, stopSeq = null } = {}
 ) {
-  const cacheKey = `${route}|${stopId}|${direction ?? ""}`;
+  const sequence = stopSeq == null ? null : Number(stopSeq);
+  const requestedSeq = Number.isInteger(sequence) && sequence > 0 ? sequence : null;
+  const cacheKey = `${route}|${stopId}|${direction ?? ""}|${requestedSeq ?? "all"}`;
 
   if (useCache) {
     const cached = etaCache.get(cacheKey);
@@ -123,9 +144,16 @@ export async function fetchEta(
   }
 
   const url = `${BASE_URL}/eta/CTB/${stopId}/${route}`;
-  const payload = await fetchJson(url);
+  // A physical stop/route response includes all directions and occurrences.
+  // Share only the in-flight payload; filtering and caches stay independent.
+  if (!etaPayloadInflight.has(url)) {
+    const request = fetchJson(url, { timeoutMs: ETA_REQUEST_TIMEOUT_MS })
+      .finally(() => etaPayloadInflight.delete(url));
+    etaPayloadInflight.set(url, request);
+  }
+  const payload = await etaPayloadInflight.get(url);
   const entries = payload.data ?? [];
-  const { first, second } = pickArrivals(entries, direction);
+  const { first, second } = pickArrivals(entries, direction, requestedSeq);
 
   const receivedAtMs = Date.now();
   const value = {

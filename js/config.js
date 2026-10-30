@@ -63,10 +63,26 @@ export const LOCATION = {
   timezone: "Asia/Hong_Kong",
 };
 
-export const REFRESH_INTERVAL_MS = 5_000;
+/** Optional browser-visible CARTO Basemaps key; empty uses OpenStreetMap tiles. */
+export const CARTO_BASEMAP_API_KEY = "cb1_4y64_1_ea1d9d68f5e63c7f8d22ea21";
+
+/** Selected watchlist entries are checked independently of Citybus timestamps. */
+export const FOCUSED_ETA_REFRESH_INTERVAL_MS = 12_000;
+
+/** Unselected watchlist entries are checked about once a minute. */
+export const WATCHLIST_REFRESH_INTERVAL_MS = 60_000;
+
+/** Bound an ETA request so a stalled connection cannot hold a polling slot. */
+export const ETA_REQUEST_TIMEOUT_MS = 8_000;
 
 /** Full focus-map re-estimate (upstream ETAs + repaint) at most this often. */
 export const FOCUS_REFRESH_INTERVAL_MS = 60_000;
+
+/** Ease accepted position corrections along the route over this interval. */
+export const BUS_POSITION_BLEND_MS = 5_000;
+
+/** Large ETA changes may identify another bus; reset presentation continuity. */
+export const BUS_POSITION_MAX_ETA_SHIFT_MS = 5 * 60_000;
 
 /** Upstream stop ETA cache TTL during focus tracking. */
 export const UPSTREAM_ETA_CACHE_TTL_MS = 60_000;
@@ -83,9 +99,6 @@ export const WALK_SPEED_M_PER_MIN = 80;
 /** Max upstream stops to sample for live-derived bus speed. */
 export const UPSTREAM_ETA_SAMPLE_SIZE = 4;
 
-/** Treat buses with ETA under this many minutes as arriving at the stop. */
-export const ARRIVING_THRESHOLD_MIN = 1;
-
 /** Clamp live-derived bus speed (m/min) to a sane urban band (~5–36 km/h). */
 export const MIN_BUS_SPEED_M_PER_MIN = 80;
 export const MAX_BUS_SPEED_M_PER_MIN = 600;
@@ -93,17 +106,37 @@ export const MAX_BUS_SPEED_M_PER_MIN = 600;
 /** Fallback speed when upstream ETA matching fails (~15 km/h). */
 export const DEFAULT_BUS_SPEED_M_PER_MIN = 250;
 
-/** Bus marker chase factor per frame toward target (0–1). */
-export const BUS_MARKER_LERP = 0.08;
+/** Reference map zoom for dash length, gaps, and visual travel speed. */
+export const PULSE_ZOOM_REF = 15;
 
-/** Duration to animate the bus along the route to a revised API prediction. */
-export const BUS_REPOSITION_MS = 1_200;
+/** Clamp zoom-based dash sizing and speed scale (min / max). */
+export const PULSE_ZOOM_SCALE_MIN = 0.65;
+export const PULSE_ZOOM_SCALE_MAX = 1.45;
 
-/** Ignore prediction deltas smaller than this (meters) when starting a reposition. */
-export const BUS_REPOSITION_MIN_M = 5;
+/** Rounded dash stroke width and travel speed at the reference zoom. */
+export const PULSE_DASH_WIDTH_PX = 3.5;
+export const PULSE_DASH_SPEED_PX_PER_SEC = 28;
 
-/** Max meters a same-bus ETA revision may move the marker backward. */
-export const MAX_BUS_REWIND_M = 400;
+/** Individual dash lengths, excluding round caps: shorter near the next stop. */
+export const PULSE_DASH_NEAR_LENGTH_PX = 3;
+export const PULSE_DASH_FAR_LENGTH_PX = 18;
+
+/** Visible gaps between round caps: tighter near the next stop. */
+export const PULSE_DASH_NEAR_GAP_PX = 3;
+export const PULSE_DASH_FAR_GAP_PX = 10;
+
+/** Remaining road distances defining the near/far spacing endpoints. */
+export const PULSE_DASH_NEAR_DISTANCE_M = 20;
+export const PULSE_DASH_FAR_DISTANCE_M = 300;
+
+/** Hide the stream when too little screen distance remains to read it. */
+export const PULSE_MIN_REMAINING_PX = 16;
+
+/** Fade-in duration (ms) when the final-leg pulse appears. */
+export const PULSE_FADE_IN_MS = 250;
+
+/** Fade-out duration (ms) before pulse layers are removed. */
+export const PULSE_FADE_OUT_MS = 200;
 
 /**
  * Idle GPS follow window as a fraction of the top-half active area (0–1).

@@ -1,14 +1,9 @@
 import { initTheme } from "./theme.js";
 import {
   LOCATION,
-  REFRESH_INTERVAL_MS,
   FOCUS_REFRESH_INTERVAL_MS,
-  ARRIVING_THRESHOLD_MIN,
   MAX_WALK_MINUTES,
   WALK_SPEED_M_PER_MIN,
-  BUS_REPOSITION_MS,
-  BUS_REPOSITION_MIN_M,
-  MAX_BUS_REWIND_M,
   NEARBY_STOP_RADIUS_M,
 } from "./config.js";
 import {
@@ -24,6 +19,7 @@ import {
   formatTime,
   prefetchRouteGeometry,
   trackingNowMs,
+  etaModelKey,
 } from "./api.js";
 import {
   loadWatchlist,
@@ -35,8 +31,8 @@ import {
 } from "./watchlist.js";
 import {
   estimateBusPosition,
-  pointAtCumDist,
-  positionFromEtaChain,
+  resolveApproachPulse,
+  slicePolylineBetween,
   sanitizeEtaChain,
   resolveActiveBoardingEta,
   haversineMeters,
@@ -46,14 +42,18 @@ import {
   getLastPosition,
   onPositionChange,
 } from "./geo.js";
+import { createRefreshScheduler } from "./refreshScheduler.js";
+import { createPositionSmoother } from "./positionSmoothing.js";
 import {
   ROUTE_COLORS,
   initMapStage,
   showFocusPanel,
   hideFocusPanel,
   updateYouMarker,
+  ensureActiveSegmentGeometry,
+  updateActiveSegmentMotion,
+  fadeOutActiveSegment,
   updateBusMarker,
-  dissolveBusMarker,
   updateFocusOverlays,
   isFocusPanelVisible,
   followYouInActiveArea,
@@ -103,20 +103,22 @@ const SWIPE_OPEN_RATIO = 0.4;
 let watchlist = loadWatchlist();
 let watchlistIndex = buildWatchlistIndex(watchlist);
 
-let refreshTimer = null;
+let refreshScheduler = null;
 let countdownTimer = null;
-let nextRefreshAt = 0;
-let isRefreshing = false;
+let countdownState = { mode: "idle", nextAtMs: null };
 let focusedIds = [];
 let focusToken = 0;
+let focusRefreshGeneration = 0;
 let lastEtaById = new Map();
 let animFrame = null;
+let lastBusAnimAt = 0;
 let didPrefetch = false;
 let stopCoordsById = new Map();
 let sortTimer = null;
 let lastSortedOrderKey = "";
 /** @type {Map<string, object>} */
 let focusEstimates = new Map();
+const positionSmoother = createPositionSmoother();
 let lastFocusFullRefreshAt = 0;
 
 let routeCatalog = [];
@@ -239,6 +241,7 @@ function rebuildRows() {
   }
 
   lastSortedOrderKey = "";
+  refreshScheduler?.notifyEntriesChanged();
 }
 
 function ensureRows() {
@@ -446,138 +449,62 @@ function selectionKey(ids = focusedIds) {
   return ids.join("|");
 }
 
-function clearBusReposition(estimate) {
-  if (!estimate) return;
-  estimate.repositionFromCum = null;
-  estimate.repositionToCum = null;
-  estimate.repositionStartedAt = null;
+function buildApproachPulseForRoute(estimate, nowMs, placement) {
+  if (!estimate) return null;
+  const pulse = resolveApproachPulse(estimate, nowMs, placement);
+  if (!pulse || pulse.toCum - pulse.fromCum < 1) return null;
+
+  const points = slicePolylineBetween(
+    estimate.polyline,
+    pulse.fromCum,
+    pulse.toCum
+  );
+  if (points.length < 2) return null;
+
+  return {
+    points,
+    progress: pulse.progress,
+    remainingM: Math.max(0, pulse.toCum - pulse.busCum),
+  };
 }
 
-/** Raise furthest same-bus progress shown (never decreases until handoff). */
-function bumpProgressHighWater(estimate) {
-  if (!estimate || estimate.busCumDist == null) return;
-  const prev = estimate.progressHighWaterCum;
-  estimate.progressHighWaterCum =
-    prev == null ? estimate.busCumDist : Math.max(prev, estimate.busCumDist);
-}
+function applyBusAndPulseToMap(
+  routeId,
+  estimate,
+  colorIndex,
+  { dual = false, dtMs = 16, motionNowMs = performance.now() } = {}
+) {
+  const now = trackingNowMs(estimate);
+  const bus = positionSmoother.getPosition(routeId, now, motionNowMs);
+  if (bus) {
+    updateBusMarker(routeId, { lat: bus.lat, lng: bus.lng });
+  } else {
+    updateBusMarker(routeId, null);
+  }
 
-/**
- * Placement floor: passed-stop floor plus capped rewind behind high water.
- * Prevents repeated ETA slips from walking the marker back to the terminus.
- */
-function trackingFloor(estimate) {
-  const passed = estimate?.minCumDist ?? 0;
-  const highWater =
-    estimate?.progressHighWaterCum ?? estimate?.busCumDist ?? 0;
-  return Math.max(passed, highWater - MAX_BUS_REWIND_M);
-}
+  const pulse = resolveApproachPulse(estimate, now, bus);
+  if (!pulse || pulse.toCum - pulse.fromCum < 1) {
+    fadeOutActiveSegment(routeId);
+    return Boolean(bus);
+  }
 
-function startBusReposition(estimate, toCum) {
-  if (!estimate || toCum == null || estimate.busCumDist == null) return false;
-  const fromCum = estimate.busCumDist;
-  if (Math.abs(toCum - fromCum) < BUS_REPOSITION_MIN_M) return false;
-  estimate.repositionFromCum = fromCum;
-  estimate.repositionToCum = toCum;
-  estimate.repositionStartedAt = performance.now();
+  const points = slicePolylineBetween(
+    estimate.polyline,
+    pulse.fromCum,
+    pulse.toCum
+  );
+  if (points.length < 2) {
+    fadeOutActiveSegment(routeId);
+    return Boolean(bus);
+  }
+
+  ensureActiveSegmentGeometry(routeId, { points, colorIndex, dual });
+  updateActiveSegmentMotion(routeId, {
+    progress: pulse.progress,
+    remainingM: Math.max(0, pulse.toCum - pulse.busCum),
+    dtMs,
+  });
   return true;
-}
-
-/**
- * Mark the bus as arriving and ease along the polyline onto the boarding stop
- * instead of teleporting. Returns true while a reposition animation is running.
- */
-function beginArriveAtStop(estimate) {
-  if (!estimate) return false;
-  const stop = estimate.boardingStop;
-  const boardingCum =
-    estimate.boardingCumDist ??
-    stop?.cumDist ??
-    estimate.polyline?.[estimate.polyline.length - 1]?.cumDist;
-
-  estimate.reason = "arriving";
-  estimate.speedMPerMin = null;
-
-  if (!stop || boardingCum == null) return false;
-
-  // Already easing toward the boarding stop.
-  if (
-    estimate.repositionStartedAt != null &&
-    estimate.repositionToCum != null &&
-    Math.abs(estimate.repositionToCum - boardingCum) < BUS_REPOSITION_MIN_M
-  ) {
-    return true;
-  }
-
-  if (estimate.busCumDist != null && estimate.polyline?.length) {
-    if (startBusReposition(estimate, boardingCum)) return true;
-  }
-
-  clearBusReposition(estimate);
-  estimate.busCumDist = boardingCum;
-  estimate.busLatLng = { lat: stop.lat, lng: stop.lng };
-  bumpProgressHighWater(estimate);
-  return false;
-}
-
-function easeOutCubic(t) {
-  return 1 - (1 - t) ** 3;
-}
-
-/** Lerp along the polyline while a reposition animation is active. */
-function tickBusReposition(estimate) {
-  if (
-    estimate.repositionStartedAt == null ||
-    estimate.repositionFromCum == null ||
-    estimate.repositionToCum == null ||
-    !estimate.polyline?.length
-  ) {
-    return null;
-  }
-
-  const elapsed = performance.now() - estimate.repositionStartedAt;
-  const t = Math.min(1, elapsed / BUS_REPOSITION_MS);
-  const cum =
-    estimate.repositionFromCum +
-    (estimate.repositionToCum - estimate.repositionFromCum) * easeOutCubic(t);
-  const point = pointAtCumDist(estimate.polyline, cum);
-  if (t >= 1) clearBusReposition(estimate);
-  return point;
-}
-
-/**
- * Predicted cumDist from current ETA chain / speed (tracking floor applied).
- */
-function predictedCumForEstimate(estimate, nowMs) {
-  if (!estimate?.polyline?.length) return null;
-  const boardingCum =
-    estimate.boardingCumDist ??
-    estimate.boardingStop?.cumDist ??
-    estimate.polyline[estimate.polyline.length - 1].cumDist;
-  if (boardingCum == null) return null;
-
-  const floor = trackingFloor(estimate);
-
-  if (estimate.etaChain?.length >= 2) {
-    const point = positionFromEtaChain(
-      estimate.etaChain,
-      estimate.polyline,
-      nowMs,
-      boardingCum,
-      floor
-    );
-    return point?.cumDist ?? null;
-  }
-
-  if (estimate.speedMPerMin && estimate.boardEtaMs != null) {
-    const minsLeft = (estimate.boardEtaMs - nowMs) / 60_000;
-    if (minsLeft <= 0) return boardingCum;
-    return Math.max(
-      floor,
-      Math.min(boardingCum, boardingCum - estimate.speedMPerMin * minsLeft)
-    );
-  }
-
-  return null;
 }
 
 function stopBusAnimation() {
@@ -585,58 +512,25 @@ function stopBusAnimation() {
     cancelAnimationFrame(animFrame);
     animFrame = null;
   }
+  lastBusAnimAt = 0;
 }
 
 function startBusAnimations(estimatesById, token = focusToken) {
   stopBusAnimation();
+  if (document.visibilityState !== "visible") return;
 
   const tracks = [];
   for (const [id, estimate] of estimatesById) {
-    if (!estimate?.polyline?.length || estimate.busCumDist == null) continue;
-    if (estimate.reason === "seq-1") continue;
-
-    const polyline = estimate.polyline;
-    const boardingCum =
-      estimate.boardingCumDist ??
-      estimate.boardingStop?.cumDist ??
-      polyline[polyline.length - 1].cumDist;
-
-    // Keep animating arriving buses until they finish easing onto the stop.
-    if (estimate.reason === "arriving") {
-      const atStop =
-        estimate.repositionStartedAt == null &&
-        Math.abs(estimate.busCumDist - boardingCum) < BUS_REPOSITION_MIN_M;
-      if (atStop) continue;
-      tracks.push({ id, mode: "arrive", estimate, boardingCum });
-      continue;
-    }
-
-    if (estimate.etaChain?.length >= 2) {
-      tracks.push({ id, mode: "segment", estimate, boardingCum });
-      continue;
-    }
-
-    if (!estimate.speedMPerMin || !estimate.boardEtaMs) continue;
-    if (
-      estimate.reason !== "ok" &&
-      estimate.reason !== "default-speed" &&
-      estimate.reason !== "segment"
-    ) {
-      continue;
-    }
-
-    tracks.push({
-      id,
-      mode: "speed",
-      estimate,
-      boardingCum,
-      speedMPerMin: estimate.speedMPerMin,
-    });
+    if (!estimate?.polyline?.length || !estimate.boardEtaMs) continue;
+    if (estimate.reason === "seq-1" || estimate.reason === "no-eta") continue;
+    tracks.push({ id, estimate });
   }
 
   if (!tracks.length) return;
 
-  const tick = () => {
+  const dual = focusedIds.length >= 2;
+
+  const tick = (now) => {
     if (
       token !== focusToken ||
       !isFocusPanelVisible() ||
@@ -645,106 +539,31 @@ function startBusAnimations(estimatesById, token = focusToken) {
       return;
     }
 
+    const dtMs = lastBusAnimAt ? Math.max(0, now - lastBusAnimAt) : 16;
+    lastBusAnimAt = now;
+    const motionNowMs = performance.now();
+
     let keepRunning = false;
     let needsHandoffRefresh = false;
 
     for (const track of tracks) {
       if (!focusedIds.includes(track.id)) continue;
       const estimate = focusEstimates.get(track.id) ?? track.estimate;
-      const { boardingCum } = track;
-      let point = null;
+      const colorIndex = focusedIds.indexOf(track.id) % ROUTE_COLORS.length;
 
-      const now = trackingNowMs(estimate);
-      const minsLeft = (estimate.boardEtaMs - now) / 60_000;
+      const trackingNow = trackingNowMs(estimate);
+      const minsLeft = (estimate.boardEtaMs - trackingNow) / 60_000;
 
       if (minsLeft <= 0) {
-        clearBusReposition(estimate);
+        positionSmoother.clear(track.id);
+        fadeOutActiveSegment(track.id);
+        updateBusMarker(track.id, null);
         needsHandoffRefresh = true;
         continue;
       }
 
-      // Ease into the stop when under the arriving threshold (or already arriving).
-      if (
-        track.mode === "arrive" ||
-        minsLeft <= ARRIVING_THRESHOLD_MIN ||
-        estimate.reason === "arriving"
-      ) {
-        const stop = estimate.boardingStop;
-        const animating = beginArriveAtStop(estimate);
-        if (animating) {
-          const repositionPoint = tickBusReposition(estimate);
-          if (repositionPoint) {
-            estimate.busCumDist = repositionPoint.cumDist;
-            estimate.busLatLng = {
-              lat: repositionPoint.lat,
-              lng: repositionPoint.lng,
-            };
-            bumpProgressHighWater(estimate);
-            updateBusMarker(track.id, {
-              lat: repositionPoint.lat,
-              lng: repositionPoint.lng,
-            });
-            keepRunning = true;
-          } else if (stop) {
-            estimate.busCumDist = boardingCum;
-            estimate.busLatLng = { lat: stop.lat, lng: stop.lng };
-            bumpProgressHighWater(estimate);
-            updateBusMarker(track.id, { lat: stop.lat, lng: stop.lng });
-          }
-        } else if (stop && estimate.busLatLng) {
-          updateBusMarker(track.id, {
-            lat: estimate.busLatLng.lat,
-            lng: estimate.busLatLng.lng,
-          });
-        }
-        continue;
-      }
-
-      // Animate along the route to a revised API prediction, then resume tracking.
-      const repositionPoint = tickBusReposition(estimate);
-      if (repositionPoint) {
-        estimate.busCumDist = repositionPoint.cumDist;
-        estimate.busLatLng = {
-          lat: repositionPoint.lat,
-          lng: repositionPoint.lng,
-        };
-        bumpProgressHighWater(estimate);
-        updateBusMarker(track.id, {
-          lat: repositionPoint.lat,
-          lng: repositionPoint.lng,
-        });
+      if (applyBusAndPulseToMap(track.id, estimate, colorIndex, { dual, dtMs, motionNowMs })) {
         keepRunning = true;
-        continue;
-      }
-
-      // Tracking floor: passed stops + capped rewind behind high water.
-      const floor = trackingFloor(estimate);
-
-      if (track.mode === "segment") {
-        point = positionFromEtaChain(
-          estimate.etaChain,
-          estimate.polyline,
-          now,
-          boardingCum,
-          floor
-        );
-        if (point && point.cumDist < boardingCum - 1) {
-          keepRunning = true;
-        }
-      } else {
-        const cum = Math.max(
-          floor,
-          Math.min(boardingCum, boardingCum - track.speedMPerMin * minsLeft)
-        );
-        point = pointAtCumDist(estimate.polyline, cum);
-        if (cum < boardingCum - 1) keepRunning = true;
-      }
-
-      if (point) {
-        estimate.busCumDist = point.cumDist;
-        estimate.busLatLng = { lat: point.lat, lng: point.lng };
-        bumpProgressHighWater(estimate);
-        updateBusMarker(track.id, { lat: point.lat, lng: point.lng });
       }
     }
 
@@ -758,9 +577,14 @@ function startBusAnimations(estimatesById, token = focusToken) {
   animFrame = requestAnimationFrame(tick);
 }
 
+function apiStopSequence(value) {
+  if (typeof value !== "number" && typeof value !== "string") return null;
+  const sequence = Number(value);
+  return Number.isInteger(sequence) && sequence > 0 ? sequence : null;
+}
+
 function applyLightweightFocusEtaUpdate(results) {
   let needsHandoff = false;
-  let startedReposition = false;
 
   for (const { id, result } of results) {
     if (!focusedIds.includes(id)) continue;
@@ -768,69 +592,50 @@ function applyLightweightFocusEtaUpdate(results) {
     if (!estimate || result?.error) continue;
 
     const { active, handedOff } = resolveActiveBoardingEta(result);
-    if (handedOff || !active?.eta) {
-      clearBusReposition(estimate);
+    const activeSeq = apiStopSequence(active?.seq);
+    const boardingSeq = apiStopSequence(estimate.boardingStop?.apiSeq);
+    // Losing or gaining sequence evidence can change which loop visit is known.
+    const occurrenceChanged = activeSeq !== boardingSeq;
+    if (handedOff || occurrenceChanged || !active?.eta) {
+      positionSmoother.clear(id);
+      updateBusMarker(id, null);
+      fadeOutActiveSegment(id);
       needsHandoff = true;
       continue;
     }
 
     const boardEtaMs = new Date(active.eta).getTime();
 
-    // Preserve tracking clock when snapshot is unchanged — resetting
-    // receivedAtMs would rewind trackingNowMs by ~poll interval.
-    if (
-      result.snapshotMs != null &&
-      result.snapshotMs !== estimate.snapshotMs
-    ) {
-      estimate.snapshotMs = result.snapshotMs;
-      estimate.receivedAtMs = result.receivedAtMs;
-    }
-
-    // Same-bus ETA revision: update in place (full refresh only on handoff).
-    estimate.boardEtaMs = boardEtaMs;
-
     const nowMs = trackingNowMs(estimate);
     const minsLeft = (boardEtaMs - nowMs) / 60_000;
-    estimate.minutesToBoard = minsLeft > 0 ? minsLeft : null;
 
     if (minsLeft == null || minsLeft <= 0) {
-      clearBusReposition(estimate);
       needsHandoff = true;
       continue;
     }
 
-    if (minsLeft <= ARRIVING_THRESHOLD_MIN) {
-      const stop = estimate.boardingStop;
-      if (beginArriveAtStop(estimate)) {
-        startedReposition = true;
-      } else if (stop && estimate.busLatLng) {
-        updateBusMarker(id, {
-          lat: estimate.busLatLng.lat,
-          lng: estimate.busLatLng.lng,
-        });
-      }
-      continue;
-    }
-
-    if (estimate.etaChain?.length) {
-      const boardingStopId = estimate.boardingStop?.stopId;
-      for (const point of estimate.etaChain) {
-        if (point.stopId === boardingStopId) {
-          point.etaMs = boardEtaMs;
-        }
-      }
-      estimate.etaChain = sanitizeEtaChain(estimate.etaChain);
-    }
-
-    const predicted = predictedCumForEstimate(estimate, nowMs);
-    if (predicted != null && startBusReposition(estimate, predicted)) {
-      startedReposition = true;
-    }
+    // Keep the previous model intact until its displayed position is sampled.
+    const etaChain = estimate.etaChain?.map((point, i, points) =>
+      i === points.length - 1 && point.stopId === estimate.boardingStop?.stopId
+        ? { ...point, etaMs: boardEtaMs } : point
+    );
+    const updated = {
+      ...estimate,
+      snapshotMs: result.snapshotMs ?? null,
+      receivedAtMs: result.receivedAtMs ?? null,
+      boardEtaMs,
+      minutesToBoard: minsLeft,
+      busChanged: false,
+      sourceEtaKey: etaModelKey(result),
+      etaChain: etaChain ? sanitizeEtaChain(etaChain) : etaChain,
+    };
+    positionSmoother.setEstimate(id, updated, nowMs, performance.now());
+    focusEstimates.set(id, updated);
   }
 
   if (needsHandoff) {
     refreshFocusedEstimate({ refreshUpstream: true });
-  } else if (startedReposition && !animFrame) {
+  } else if (!animFrame && focusedIds.length > 0) {
     startBusAnimations(focusEstimates, focusToken);
   }
 }
@@ -838,17 +643,19 @@ function applyLightweightFocusEtaUpdate(results) {
 function needsFullFocusRefresh(results) {
   if (focusedIds.length === 0 || focusEstimates.size === 0) return false;
 
-  const snapshotChanged = focusedIds.some((id) => {
-    const eta = results.find((r) => r.id === id)?.result;
+  const focusedResults = results.filter(({ id, result }) => focusedIds.includes(id) && !result?.error);
+  if (!focusedResults.length) return false;
+  const modelChanged = focusedResults.some(({ id, result: eta }) => {
     const estimate = focusEstimates.get(id);
-    if (!eta || eta.error || !estimate) return true;
-    return eta.snapshotMs !== estimate.snapshotMs;
+    if (!estimate) return true;
+    const { handedOff } = resolveActiveBoardingEta(eta);
+    return handedOff || etaModelKey(eta) !== estimate.sourceEtaKey;
   });
 
   const intervalElapsed =
     Date.now() - lastFocusFullRefreshAt >= FOCUS_REFRESH_INTERVAL_MS;
 
-  return snapshotChanged || intervalElapsed;
+  return modelChanged || intervalElapsed;
 }
 
 async function loadEstimateForEntry(entry) {
@@ -865,20 +672,20 @@ async function loadEstimateForEntry(entry) {
     // continue without pin
   }
 
-  const cached = lastEtaById.get(entry.id);
-  const etaPromise =
-    cached?.first?.eta && cached.snapshotMs != null
-      ? Promise.resolve(cached)
-      : fetchEta(entry.route, entry.stopId, entry.direction);
+  const etaPromise = fetchEta(entry.route, entry.stopId, entry.direction);
 
   try {
     const eta = await etaPromise;
-    const estimate = await estimateBusPosition(entry, eta, {
+    commitEntryResult(entry.id, { ...eta, error: null });
+    const latest = lastEtaById.get(entry.id);
+    const source = latest && !latest.error ? latest : eta;
+    const estimate = await estimateBusPosition(entry, source, {
       denseUpstream: true,
       refreshUpstream: true,
     });
     return {
       ...estimate,
+      sourceEtaKey: etaModelKey(source),
       boardingStop: estimate.boardingStop
         ? {
             ...boardingStop,
@@ -902,14 +709,17 @@ async function loadEstimateForEntry(entry) {
 }
 
 function routesFromEstimates(ids, estimatesById) {
+  const motionNowMs = performance.now();
   return ids.map((id, colorIndex) => {
     const estimate = estimatesById.get(id);
+    const now = estimate ? trackingNowMs(estimate) : Date.now();
+    const bus = estimate ? positionSmoother.getPosition(id, now, motionNowMs) : null;
     return {
       id,
       colorIndex: colorIndex % ROUTE_COLORS.length,
       boardingStop: estimate?.boardingStop ?? null,
-      busLatLng: estimate?.busLatLng ?? null,
-      busAppearing: Boolean(estimate?.busAppearing),
+      busLatLng: bus ? { lat: bus.lat, lng: bus.lng } : null,
+      activeSegment: buildApproachPulseForRoute(estimate, now, bus),
       polyline: estimate?.polyline ?? [],
       routePolyline: estimate?.routePolyline ?? [],
       stops: estimate?.stops ?? [],
@@ -917,13 +727,31 @@ function routesFromEstimates(ids, estimatesById) {
   });
 }
 
+function acceptFocusEstimates(estimatesById) {
+  for (const id of focusedIds) {
+    if (!estimatesById.has(id)) positionSmoother.clear(id);
+  }
+  const motionNowMs = performance.now();
+  for (const [id, estimate] of estimatesById) {
+    if (document.visibilityState === "visible") {
+      positionSmoother.setEstimate(id, estimate, trackingNowMs(estimate), motionNowMs);
+    } else {
+      positionSmoother.clear(id);
+    }
+  }
+  focusEstimates = estimatesById;
+}
+
 async function syncFocusMap({ refit = true } = {}) {
   const token = ++focusToken;
+  const refreshGeneration = focusRefreshGeneration;
   const ids = [...focusedIds];
   const key = selectionKey(ids);
   setFocusedRows(ids);
   stopBusAnimation();
   focusEstimates.clear();
+  positionSmoother.clearAll();
+  refreshScheduler?.notifyEntriesChanged();
 
   if (ids.length === 0) {
     hideFocusPanel({ youLatLng: getLastPosition() });
@@ -993,10 +821,14 @@ async function syncFocusMap({ refit = true } = {}) {
     })
   );
 
-  if (token !== focusToken || selectionKey() !== key) return;
+  if (token !== focusToken || selectionKey() !== key || refreshGeneration !== focusRefreshGeneration) return;
+  if (estimates.some(([id, estimate]) => estimate?.sourceEtaKey != null &&
+    estimate.sourceEtaKey !== etaModelKey(lastEtaById.get(id)))) {
+    return refreshFocusedEstimate({ refreshUpstream: true });
+  }
 
   const estimatesById = new Map(estimates.filter(([, e]) => e));
-  focusEstimates = estimatesById;
+  acceptFocusEstimates(estimatesById);
   lastFocusFullRefreshAt = Date.now();
 
   updateFocusOverlays({
@@ -1011,7 +843,9 @@ async function syncFocusMap({ refit = true } = {}) {
 function exitFocus() {
   focusToken += 1;
   focusedIds = [];
+  refreshScheduler?.notifyEntriesChanged();
   focusEstimates.clear();
+  positionSmoother.clearAll();
   lastFocusFullRefreshAt = 0;
   stopBusAnimation();
   setFocusedRows([]);
@@ -1042,9 +876,11 @@ async function toggleFocus(entryId) {
 async function refreshFocusedEstimate({ refreshUpstream = true } = {}) {
   if (focusedIds.length === 0) return;
 
+  const generation = ++focusRefreshGeneration;
   const token = focusToken;
   const ids = [...focusedIds];
   const key = selectionKey(ids);
+  const sourceKeys = new Map();
 
   try {
     const estimates = await Promise.all(
@@ -1052,114 +888,26 @@ async function refreshFocusedEstimate({ refreshUpstream = true } = {}) {
         const entry = watchlist.find((e) => e.id === id);
         const eta = lastEtaById.get(id);
         if (!entry || !eta) return [id, focusEstimates.get(id) ?? null];
+        sourceKeys.set(id, etaModelKey(eta));
         try {
           const estimate = await estimateBusPosition(entry, eta, {
             denseUpstream: true,
             refreshUpstream,
           });
-          const prior = focusEstimates.get(id);
-          const sameBus =
-            prior?.busLatLng &&
-            estimate &&
-            !estimate.busChanged &&
-            estimate.reason !== "no-eta";
-
-          // Preserve tracking clock when snapshot is unchanged so a timed
-          // full refresh does not rewind trackingNowMs.
-          if (
-            sameBus &&
-            prior.snapshotMs != null &&
-            estimate.snapshotMs === prior.snapshotMs &&
-            prior.receivedAtMs != null
-          ) {
-            estimate.receivedAtMs = prior.receivedAtMs;
-          }
-
-          // Same bus: keep marker at prior spot and animate along the route
-          // to the new prediction (forward or capped back) instead of teleporting.
-          if (
-            sameBus &&
-            prior.busCumDist != null &&
-            estimate.busCumDist != null
-          ) {
-            const rawTargetCum = estimate.busCumDist;
-            const rawTargetLatLng = estimate.busLatLng;
-            estimate.progressHighWaterCum = prior.progressHighWaterCum;
-            estimate.busCumDist = prior.busCumDist;
-            estimate.busLatLng = prior.busLatLng;
-            bumpProgressHighWater(estimate);
-            const targetCum = Math.max(
-              trackingFloor(estimate),
-              rawTargetCum
-            );
-            let targetLatLng = rawTargetLatLng;
-            if (targetCum !== rawTargetCum && estimate.polyline?.length) {
-              const p = pointAtCumDist(estimate.polyline, targetCum);
-              if (p) targetLatLng = { lat: p.lat, lng: p.lng };
-            }
-            if (!startBusReposition(estimate, targetCum) && targetLatLng) {
-              estimate.busCumDist = targetCum;
-              estimate.busLatLng = targetLatLng;
-              bumpProgressHighWater(estimate);
-            }
-          } else if (sameBus && !estimate.busLatLng && prior.busLatLng) {
-            estimate.busLatLng = prior.busLatLng;
-            estimate.busCumDist = prior.busCumDist;
-            estimate.progressHighWaterCum = prior.progressHighWaterCum;
-            bumpProgressHighWater(estimate);
-            estimate.speedMPerMin =
-              estimate.speedMPerMin ?? prior.speedMPerMin;
-          }
-          return [id, estimate];
+          return [id, { ...estimate, sourceEtaKey: sourceKeys.get(id) }];
         } catch {
           return [id, focusEstimates.get(id) ?? null];
         }
       })
     );
 
-    if (token !== focusToken || selectionKey() !== key) return;
-
-    const dissolveIds = [];
-    const appearIds = new Set();
-    for (const [id, estimate] of estimates) {
-      if (!estimate) continue;
-      const prior = focusEstimates.get(id);
-      if (!prior?.busLatLng) {
-        if (estimate.busChanged && estimate.busLatLng) appearIds.add(id);
-        continue;
-      }
-      const cleared = !estimate.busLatLng;
-      // Dissolve only on true bus handoff — ETA revisions keep the marker.
-      const changed = Boolean(estimate.busChanged);
-      if (cleared || changed) {
-        dissolveIds.push(id);
-        if (estimate.busLatLng) appearIds.add(id);
-      }
+    if (generation !== focusRefreshGeneration || token !== focusToken || selectionKey() !== key) return;
+    if ([...sourceKeys].some(([id, sourceKey]) => sourceKey !== etaModelKey(lastEtaById.get(id)))) {
+      return refreshFocusedEstimate({ refreshUpstream });
     }
 
-    if (dissolveIds.length) {
-      stopBusAnimation();
-      for (const id of dissolveIds) {
-        clearBusReposition(focusEstimates.get(id));
-      }
-      await Promise.all(dissolveIds.map((id) => dissolveBusMarker(id)));
-      if (token !== focusToken || selectionKey() !== key) return;
-    }
-
-    const estimatesById = new Map(
-      estimates
-        .filter(([, e]) => e)
-        .map(([id, estimate]) => [
-          id,
-          appearIds.has(id)
-            ? { ...estimate, busAppearing: true, busChanged: false }
-            : { ...estimate, busChanged: false },
-        ])
-    );
-    for (const estimate of estimatesById.values()) {
-      bumpProgressHighWater(estimate);
-    }
-    focusEstimates = estimatesById;
+    const estimatesById = new Map(estimates.filter(([, estimate]) => estimate));
+    acceptFocusEstimates(estimatesById);
     lastFocusFullRefreshAt = Date.now();
 
     updateFocusOverlays({
@@ -1195,6 +943,24 @@ async function loadEntry(entry) {
       error: err.message,
     };
   }
+}
+
+function commitEntryResult(id, result) {
+  if (!watchlist.some((entry) => entry.id === id)) return null;
+  const previous = lastEtaById.get(id);
+  if (!result.error) {
+    if (previous && !previous.error && previous.receivedAtMs > result.receivedAtMs) {
+      result = previous;
+    }
+    lastEtaById.set(id, result);
+  } else if (!previous || previous.error) {
+    lastEtaById.set(id, result);
+  }
+  // Failed transport checks show an error but supply no evidence that the
+  // previously observed bus disappeared. Keep its source until ETA expiry.
+  const row = cardsEl.querySelector(`[data-id="${id}"]`);
+  if (row) renderRow(row, result);
+  return result;
 }
 
 function scheduleIdle(fn) {
@@ -1315,33 +1081,34 @@ async function prefetchWatchlistGeometry() {
   }
 }
 
-async function refreshAll() {
-  if (isRefreshing) return;
-  isRefreshing = true;
-
+async function refreshEntries(ids) {
+  const entries = [...new Set(ids)]
+    .map((id) => watchlist.find((entry) => entry.id === id))
+    .filter(Boolean);
+  if (!entries.length) return;
   ensureRows();
-  cardsEl.querySelectorAll(".row").forEach((row) => {
-    row.classList.add("row--loading");
-  });
+  for (const entry of entries) {
+    cardsEl.querySelector(`[data-id="${entry.id}"]`)?.classList.add("row--loading");
+  }
 
-  const results = await Promise.all(
-    watchlist.map(async (entry) => ({
+  const received = await Promise.all(
+    entries.map(async (entry) => ({
       id: entry.id,
       result: await loadEntry(entry),
     }))
   );
+  // A removed row must not be restored by a request that started before removal.
+  const results = received.map(({ id, result }) => ({ id, result: commitEntryResult(id, result) }))
+    .filter(({ result }) => result);
 
-  for (const { id, result } of results) {
-    lastEtaById.set(id, result);
-    const row = cardsEl.querySelector(`[data-id="${id}"]`);
-    if (row) renderRow(row, result);
+  if (results.length) {
+    const scope = results.every(({ id }) => focusedIds.includes(id)) && results.length < watchlist.length
+      ? " focused" : "";
+    lastRefreshEl.textContent = `Checked${scope} ${formatTime(new Date().toISOString())}`;
   }
-
-  lastRefreshEl.textContent = `Updated ${formatTime(new Date().toISOString())}`;
   paintNextRefreshCountdown();
-  isRefreshing = false;
 
-  if (focusedIds.length > 0) {
+  if (results.some(({ id }) => focusedIds.includes(id))) {
     if (needsFullFocusRefresh(results)) {
       refreshFocusedEstimate({ refreshUpstream: true });
     } else {
@@ -1352,16 +1119,30 @@ async function refreshAll() {
   scheduleIdle(prefetchWatchlistGeometry);
 }
 
+async function requestRefresh() {
+  return refreshScheduler?.refreshNow();
+}
+
 function paintNextRefreshCountdown() {
   if (!nextRefreshEl) return;
-  if (!nextRefreshAt) {
+  const { mode, nextAtMs } = countdownState;
+
+  if (mode === "refreshing") {
+    nextRefreshEl.hidden = false;
+    nextRefreshEl.textContent = "refreshing…";
+    return;
+  }
+
+  if (nextAtMs == null) {
     nextRefreshEl.hidden = true;
     nextRefreshEl.textContent = "";
     return;
   }
-  const secs = Math.max(0, Math.ceil((nextRefreshAt - Date.now()) / 1000));
+
+  const secs = Math.max(0, Math.ceil((nextAtMs - Date.now()) / 1000));
   nextRefreshEl.hidden = false;
-  nextRefreshEl.textContent = secs === 0 ? "refreshing…" : `next ${secs}s`;
+  nextRefreshEl.textContent =
+    secs === 0 ? "checking soon…" : `next check ${secs}s`;
 }
 
 function startCountdownTick() {
@@ -1370,19 +1151,19 @@ function startCountdownTick() {
   countdownTimer = setInterval(paintNextRefreshCountdown, 250);
 }
 
-function scheduleNextRefreshAt(fromMs = Date.now()) {
-  nextRefreshAt = fromMs + REFRESH_INTERVAL_MS;
-  paintNextRefreshCountdown();
-}
-
-function startAutoRefresh() {
-  if (refreshTimer) clearInterval(refreshTimer);
-  scheduleNextRefreshAt();
+function initRefreshScheduler() {
+  refreshScheduler = createRefreshScheduler({
+    getEntryIds: () => watchlist.map((entry) => entry.id),
+    getFocusedIds: () => focusedIds,
+    onRefresh: refreshEntries,
+    isActive: () => document.visibilityState === "visible",
+    onCountdown: ({ mode, nextAtMs }) => {
+      countdownState = { mode, nextAtMs };
+      paintNextRefreshCountdown();
+    },
+  });
+  refreshScheduler.start();
   startCountdownTick();
-  refreshTimer = setInterval(() => {
-    scheduleNextRefreshAt();
-    refreshAll();
-  }, REFRESH_INTERVAL_MS);
 }
 
 function setAddError(message) {
@@ -1853,7 +1634,7 @@ async function confirmAddEntry() {
   const toastMessage = `Added ${route} · ${selectedStop.nameEn}`;
   cancelAddFlow();
   rebuildRows();
-  await refreshAll();
+  await requestRefresh();
   showAddToast(toastMessage);
 
   const pos = getLastPosition();
@@ -1886,7 +1667,7 @@ function confirmRemoveEntry(id) {
   watchlistIndex = buildWatchlistIndex(watchlist);
   lastEtaById.delete(id);
   rebuildRows();
-  refreshAll();
+  requestRefresh();
 
   const pos = getLastPosition();
   if (pos) {
@@ -1973,8 +1754,7 @@ initMapStage({
     if (pos) followYouInActiveArea(pos, { animate: false });
   })
   .catch((err) => console.warn("Map init failed", err));
-refreshAll();
-startAutoRefresh();
+initRefreshScheduler();
 initNearestOrder();
 
 onPositionChange((pos) => {
@@ -1990,7 +1770,15 @@ onPositionChange((pos) => {
 
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") {
-    refreshAll();
+    for (const [id, estimate] of focusEstimates) {
+      positionSmoother.setEstimate(id, estimate, trackingNowMs(estimate), performance.now(), { reset: true });
+    }
+    if (focusedIds.length > 0) startBusAnimations(focusEstimates, focusToken);
+    refreshScheduler?.resume();
+  } else {
+    stopBusAnimation();
+    positionSmoother.clearAll();
+    refreshScheduler?.pause();
   }
 });
 
@@ -2318,7 +2106,7 @@ document.getElementById("app").addEventListener("click", (event) => {
   ) {
     return;
   }
-  refreshAll();
+  requestRefresh();
 });
 
 document.addEventListener("keydown", (event) => {

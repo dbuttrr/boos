@@ -33,4 +33,4 @@ Do not mark a task complete without these updates.
 
 ## Drift checks
 
-README must reflect current `REFRESH_INTERVAL_MS` and major features listed in PRD "Current behavior". If unsure, PRD is the behavior source of truth.
+README must reflect current focused/unfocused refresh tunables in `js/config.js` (`FOCUSED_ETA_REFRESH_INTERVAL_MS`, `WATCHLIST_REFRESH_INTERVAL_MS`, `ETA_REQUEST_TIMEOUT_MS`) and major features listed in PRD "Current behavior". If unsure, PRD is the behavior source of truth.

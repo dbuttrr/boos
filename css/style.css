@@ -43,16 +43,8 @@ html {
   --watch-sheet-inset: 0.75rem;
   --watch-sheet-height: 48dvh;
   --watch-sheet-status-space: 2.5rem;
-  --watch-sheet-status-blur: 32px;
-  --watch-sheet-status-tint-gradient: linear-gradient(
-    to bottom,
-    transparent 0%,
-    rgba(255, 255, 255, 0.04) 18%,
-    rgba(255, 255, 255, 0.11) 50%,
-    rgba(255, 255, 255, 0.04) 82%,
-    transparent 100%
-  );
   --watch-sheet-scroll-fade: 1.25rem;
+  --scroll-fade-reveal: 96px;
   --add-anchor-gap: 1rem;
   /* Inner cards (Find My–style rounded rects, not pills) */
   --radius-inner: 0.875rem;
@@ -76,6 +68,8 @@ html {
   --focus-bus-f-top: #4dd0e8;
   --focus-stop: #1f2328;
   --focus-marker-border: #fff;
+  --focus-pulse-fiber: rgba(255, 255, 255, 0.28);
+  --focus-pulse-spark: rgba(255, 255, 255, 0.92);
 }
 
 [data-theme="dark"] {
@@ -101,14 +95,6 @@ html {
   --focus-glass-highlight: rgba(255, 255, 255, 0.03);
   --focus-shadow: 0 14px 36px rgba(0, 0, 0, 0.4);
   --watch-sheet-glass: rgba(12, 16, 22, 0.28);
-  --watch-sheet-status-tint-gradient: linear-gradient(
-    to bottom,
-    transparent 0%,
-    rgba(12, 16, 22, 0.06) 18%,
-    rgba(12, 16, 22, 0.14) 50%,
-    rgba(12, 16, 22, 0.06) 82%,
-    transparent 100%
-  );
   --row-glass: rgba(255, 255, 255, 0.09);
   --row-glass-border: rgba(255, 255, 255, 0.18);
   --row-glass-shadow: 0 8px 24px rgba(0, 0, 0, 0.35),
@@ -132,6 +118,8 @@ html {
   --focus-bus-f-top: #6edff2;
   --focus-stop: #a8b2bd;
   --focus-marker-border: #c9d1d9;
+  --focus-pulse-fiber: rgba(255, 255, 255, 0.38);
+  --focus-pulse-spark: rgba(255, 255, 255, 0.95);
 }
 
 body {
@@ -160,6 +148,11 @@ body {
 .map-stage__map {
   width: 100%;
   height: 100%;
+}
+
+/* The keyless basemap has one native style; darken only its tile imagery. */
+[data-theme="dark"] .map-tiles--osm {
+  filter: invert(1) hue-rotate(180deg) saturate(0.5) brightness(0.85);
 }
 
 /* Liquid-glass watchlist over the bottom half of the map.
@@ -222,33 +215,6 @@ body {
   pointer-events: none;
 }
 
-.watch-sheet__status::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  background: var(--watch-sheet-status-tint-gradient);
-  backdrop-filter: blur(var(--watch-sheet-status-blur)) saturate(1.5);
-  -webkit-backdrop-filter: blur(var(--watch-sheet-status-blur)) saturate(1.5);
-  -webkit-mask-image: linear-gradient(
-    to bottom,
-    transparent 0%,
-    rgba(0, 0, 0, 0.45) 22%,
-    black 50%,
-    rgba(0, 0, 0, 0.45) 78%,
-    transparent 100%
-  );
-  mask-image: linear-gradient(
-    to bottom,
-    transparent 0%,
-    rgba(0, 0, 0, 0.45) 22%,
-    black 50%,
-    rgba(0, 0, 0, 0.45) 78%,
-    transparent 100%
-  );
-  pointer-events: none;
-}
-
 .watch-sheet__countdown {
   color: var(--text-faint);
   font-variant-numeric: tabular-nums;
@@ -258,6 +224,37 @@ body {
   content: "·";
   margin-right: 0.5rem;
   color: var(--text-faint);
+}
+
+/* Scroll-aware edge fade (shadcn scroll-fade vertical subset) */
+@property --scroll-fade-t {
+  syntax: "<length-percentage>";
+  inherits: false;
+  initial-value: 0px;
+}
+
+@property --scroll-fade-b {
+  syntax: "<length-percentage>";
+  inherits: false;
+  initial-value: 0px;
+}
+
+@keyframes scroll-fade-reveal-t {
+  from {
+    --scroll-fade-t: 0px;
+  }
+  to {
+    --scroll-fade-t: var(--scroll-fade-size, var(--watch-sheet-scroll-fade));
+  }
+}
+
+@keyframes scroll-fade-reveal-b {
+  from {
+    --scroll-fade-b: var(--scroll-fade-size, var(--watch-sheet-scroll-fade));
+  }
+  to {
+    --scroll-fade-b: 0px;
+  }
 }
 
 .cards {
@@ -273,16 +270,43 @@ body {
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   scrollbar-width: none;
+  --scroll-fade-size: var(--watch-sheet-scroll-fade);
   -webkit-mask-image: linear-gradient(
     to bottom,
-    transparent 0%,
-    black var(--watch-sheet-scroll-fade)
+    transparent 0,
+    #000 var(--scroll-fade-t, 0px),
+    #000 calc(100% - var(--scroll-fade-b, 0px)),
+    transparent 100%
   );
   mask-image: linear-gradient(
     to bottom,
-    transparent 0%,
-    black var(--watch-sheet-scroll-fade)
+    transparent 0,
+    #000 var(--scroll-fade-t, 0px),
+    #000 calc(100% - var(--scroll-fade-b, 0px)),
+    transparent 100%
   );
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+}
+
+@supports (animation-timeline: scroll()) {
+  .cards {
+    animation:
+      scroll-fade-reveal-t 1ms ease-in-out,
+      scroll-fade-reveal-b 1ms ease-in-out;
+    animation-timeline: scroll(self y), scroll(self y);
+    animation-range:
+      0 var(--scroll-fade-reveal),
+      calc(100% - var(--scroll-fade-reveal)) 100%;
+    animation-fill-mode: both;
+  }
+}
+
+@supports not (animation-timeline: scroll()) {
+  .cards {
+    --scroll-fade-t: var(--scroll-fade-size, var(--watch-sheet-scroll-fade));
+    --scroll-fade-b: var(--scroll-fade-size, var(--watch-sheet-scroll-fade));
+  }
 }
 
 .cards::-webkit-scrollbar {
@@ -447,10 +471,8 @@ body {
   font-size: 0.5625rem !important;
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
-  max-width: 55%;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  max-width: calc(100vw - 1.5rem);
+  white-space: normal;
 }
 
 .map-stage .leaflet-control-attribution a {
@@ -1200,7 +1222,6 @@ body.add-menu-open .nav-dock__add--clear {
   animation: nav-dock-clear-pulse 0.45s cubic-bezier(0.34, 1.4, 0.64, 1);
 }
 
-
 .focus-marker__bus {
   position: relative;
   display: flex;
@@ -1286,103 +1307,41 @@ body.add-menu-open .nav-dock__add--clear {
   right: 1px;
 }
 
-.focus-marker--dissolving .focus-marker__bus-body {
-  animation: bus-body-fade 0.55s ease-in forwards;
-}
-
-.focus-marker--dissolving .focus-marker__sand {
-  position: absolute;
-  inset: 0;
-  overflow: visible;
-  pointer-events: none;
-}
-
-.focus-marker__sand-chip {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: calc(2px + (var(--sand-i, 0) % 3) * 1px);
-  height: calc(2px + ((var(--sand-i, 0) + 1) % 3) * 1px);
-  border-radius: 1px;
-  background: var(--focus-bus);
+/* Active route segment nerve pulse (Leaflet SVG paths) */
+.focus-route-pulse-track {
   opacity: 0;
-  animation: bus-sand-scatter 0.6s ease-out forwards;
-  animation-delay: calc(var(--sand-i, 0) * 14ms);
+  transition: opacity var(--pulse-fade-in, 250ms) ease-out;
+  filter: blur(0.35px);
+  transition-delay: 0ms;
 }
 
-.focus-marker--bus-b .focus-marker__sand-chip {
-  background: var(--focus-bus-b);
+[data-theme="dark"] .focus-route-pulse-track {
+  filter: blur(0.45px);
 }
 
-.focus-marker--bus-c .focus-marker__sand-chip {
-  background: var(--focus-bus-c);
+.focus-route-pulse-comet {
+  stroke-linecap: round;
+  filter: drop-shadow(0 0 2px rgba(255, 255, 255, 0.35));
 }
 
-.focus-marker--bus-d .focus-marker__sand-chip {
-  background: var(--focus-bus-d);
+.focus-route-pulse-layer--visible.focus-route-pulse-comet {
+  opacity: 1;
 }
 
-.focus-marker--bus-e .focus-marker__sand-chip {
-  background: var(--focus-bus-e);
+.focus-route-pulse-layer--visible.focus-route-pulse-track {
+  opacity: 1;
 }
 
-.focus-marker--bus-f .focus-marker__sand-chip {
-  background: var(--focus-bus-f);
+.focus-route-pulse-layer--exiting.focus-route-pulse-track,
+.focus-route-pulse-layer--exiting.focus-route-pulse-comet {
+  opacity: 0 !important;
+  transition: opacity var(--pulse-fade-out, 200ms) ease-out;
 }
 
-.focus-marker--appearing .focus-marker__bus {
-  animation: bus-appear 0.38s ease-out;
-}
-
-@keyframes bus-body-fade {
-  0% {
-    opacity: 1;
-    transform: scale(1);
-    filter: blur(0);
-  }
-  35% {
-    opacity: 0.7;
-    transform: scale(0.95);
-    filter: blur(0.5px);
-  }
-  100% {
-    opacity: 0;
-    transform: scale(0.75);
-    filter: blur(3px);
-  }
-}
-
-@keyframes bus-sand-scatter {
-  0% {
-    opacity: 1;
-    transform: translate(-50%, -50%) scale(1);
-  }
-  40% {
-    opacity: 0.85;
-  }
-  100% {
-    opacity: 0;
-    transform: translate(
-        calc(
-          -50% + 28px + var(--sand-i, 0) * 3.5px + (var(--sand-i, 0) % 4) * 4px
-        ),
-        calc(
-          -50% - 22px - (var(--sand-i, 0) % 5) * 6px - (var(--sand-i, 0) % 3) *
-            3px
-        )
-      )
-      scale(0.25);
-  }
-}
-
-@keyframes bus-appear {
-  from {
-    opacity: 0;
-    transform: scale(0.55);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1);
+@media (prefers-reduced-motion: reduce) {
+  .focus-route-pulse-track,
+  .focus-route-pulse-comet {
+    transition: none;
   }
 }
 

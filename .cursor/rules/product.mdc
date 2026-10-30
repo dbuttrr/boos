@@ -13,6 +13,7 @@ Read [docs/PRD.md](docs/PRD.md) before planning or shipping new features.
 - Citybus (CTB) via data.gov.hk only
 - Mobile-first personal utility
 - Watchlist in localStorage; `js/config.js` seeds defaults on first visit
+- The checked-in map configuration uses CARTO tiles with a browser-visible Basemaps key. Clearing the key selects OpenStreetMap tiles without registration. Keep provider attribution visible; no backend is needed.
 
 ## Before building
 
